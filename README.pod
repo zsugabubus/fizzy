@@ -81,7 +81,8 @@ complain if OpenMP support was disabled at compile.
 Set readline application name. Default: B<Fizzy>.
 
 Example:
-  B<fizzy> -n MyFizzy
+
+  fizzy -n MyFizzy
   ...
   $if MyFizzy
   # ...
