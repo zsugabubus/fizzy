@@ -1,0 +1,1 @@
+option('openmp', type: 'feature', description: 'use OpenMP for multithreading')
