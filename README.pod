@@ -173,7 +173,7 @@ Refer to OpenMP.
 
 =head1 BUGS
 
-Report bugs to L<https://gitlab.com/zsugabubus/fizzy>.
+Report bugs to L<https://github.com/zsugabubus/fizzy>.
 
 =head1 COPYRIGHT
 
