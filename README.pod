@@ -27,11 +27,11 @@ SGR sequences (i.e. colored input).
 
 B<fizzy> uses a fullscreen terminal interface that looks like this:
 
-  READLINE
-  [AVAILABLE/FILTERED (TOTAL)] HEADER
-  RECORD0
-  RECORD1
-  ...
+	READLINE
+	[AVAILABLE/FILTERED (TOTAL)] HEADER
+	RECORD0
+	RECORD1
+	...
 
 =head1 OPTIONS
 
@@ -82,11 +82,11 @@ Set readline application name. Default: B<Fizzy>.
 
 Example:
 
-  fizzy -n MyFizzy
-  ...
-  $if MyFizzy
-  # ...
-  $endif
+	fizzy -n MyFizzy
+	...
+	$if MyFizzy
+	# ...
+	$endif
 
 =item -p
 
@@ -104,13 +104,17 @@ Disable sorting.
 
 =head1 READLINE
 
+When B<fizzy> runs in interactive mode (default) it uses C<readline(3)> utility
+to read user input. It just works out of the box however if you need any
+customization please refer to its documentation.
+
 Line handler is set to B<fizzy-emit-one>.
 
 =head2 Configuration
 
 The following readline configuration is used by default:
 
-  SPACE: fizzy-filter-matched
+	SPACE: fizzy-filter-matched
 
 =head2 Functions
 
@@ -153,13 +157,13 @@ Similar to B<fizzy-accept-one> but for all records.
 
 Open a file
 
-  $EDITOR $(fizzy)
+	$EDITOR $(fizzy)
 
 Set custom bindings in .inputrc
 
-  $if Fizzy # Refer to -n to change name.
-  +: fizzy-emit-one
-  $endif
+	$if Fizzy # Refer to -n to change name.
+	+: fizzy-emit-one
+	$endif
 
 =head1 ENVIRONMENT
 
