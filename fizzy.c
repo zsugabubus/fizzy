@@ -368,8 +368,6 @@ score_all(void)
 
 	memcpy(cur_query, opt_query, sizeof cur_query);
 
-	/* Thread number can be controlled by setting OMP_NUM_THREADS=2
-	 * environment variable. */
 #pragma omp parallel for schedule(dynamic)
 	for (uint32_t i = 0; i < n; ++i) {
 		struct record *record = records[i];
