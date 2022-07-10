@@ -17,7 +17,6 @@ executable('fizzy',
 		configuration: config,
 	),
 	dependencies: [
-		dependency('ncurses', required: true),
 		dependency('readline', required: true),
 		omp_dep,
 	],
