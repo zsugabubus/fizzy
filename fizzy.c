@@ -658,7 +658,10 @@ run_tui(void)
 
 	rl_callback_handler_install(opt_prompt, fizzy_rl_handle_line);
 
+	/* Disable scrolling. */
 	fputs("\x1b[?7l", tty);
+	/* Switch to alt screen. */
+	fputs("\x1b[?1049h", tty);
 
 	rl_insert_text(opt_query);
 	rl_resize_terminal();
