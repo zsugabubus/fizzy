@@ -277,7 +277,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 		uint32_t bonus = BONUS[cc_prev][cc_cur];
 		cc_prev = cc_cur;
 
-		uint32_t const bonus_mult = 20 * GAP_PENALTY;
+		uint32_t const bonus_mult = 10 * GAP_PENALTY;
 		bonus *= bonus_mult;
 
 		/* Speed of light squared. */
