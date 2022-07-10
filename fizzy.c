@@ -199,7 +199,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 	record->score = 0;
 
 	uint32_t out_position = 0;
-	if (0 < nb_positions)
+	if (nb_positions)
 		positions[0] = UINT32_MAX;
 
 	uint32_t n = record->size;
@@ -321,37 +321,52 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 
 			matched |= 1 << j;
 
-			if (max_scores[j + 1] < score) {
-				max_scores[j + 1] = score;
-				/* Give higher score to reoccurrances. */
-				if (j + 1 == m) {
-					max_scores[0] += CONT_BONUS * bonus_mult;
-					max_score = score;
+			if (score <= max_scores[j + 1])
+				continue;
+			max_scores[j + 1] = score;
 
-					/* Append new matched cells. */
-					if (0 < nb_positions) {
-						if (nb_positions - j < out_position)
-							out_position = nb_positions - j;
-						uint32_t skip = 0;
-						while (0 < out_position && skip < j && max_paths[j - 1][skip] <= positions[out_position - 1])
-							++skip;
-						memcpy(positions + out_position, max_paths[j - 1] + skip, (j - skip) * sizeof **max_paths);
-						out_position += j - skip;
-						positions[out_position] = i;
-						out_position += 1;
-					}
-				} else {
-					/* Only the first `j * sizeof(uint32_t)` bytes
-					 * are needed but it's faster with known size. */
-					if (0 < j)
-						memcpy(max_paths[j], max_paths[j - 1], sizeof *max_paths);
-					max_paths[j][j] = i;
-				}
+			if (j + 1 < m) {
+				/* Only the first `j * sizeof(uint32_t)` bytes
+				 * are needed but it's faster with known size. */
+				if (0 < j)
+					memcpy(max_paths[j], max_paths[j - 1], sizeof *max_paths);
+				max_paths[j][j] = i;
+				continue;
 			}
+
+			/* Give higher score to next occurrances. */
+			max_scores[0] += CONT_BONUS * bonus_mult;
+			max_score = score;
+
+			if (!nb_positions)
+				continue;
+
+			/* Ensure we have enough space.
+			 *
+			 * It is absolutely possible that it will overwrite
+			 * previous positions but only the match with the
+			 * highest score is really interesting. */
+			if (nb_positions - j < out_position)
+				out_position = nb_positions - j;
+
+			/* Append new positions. Old ones are already included
+			 * in positions list because i is strict monotonic
+			 * increasing. */
+			uint32_t skip = 0;
+			while (0 < out_position &&
+			       skip < j &&
+			       max_paths[j - 1][skip] <= positions[out_position - 1])
+				++skip;
+
+			memcpy(positions + out_position, max_paths[j - 1] + skip,
+					(j - skip) * sizeof **max_paths);
+			out_position += j - skip;
+			positions[out_position] = i;
+			out_position += 1;
 		}
 	}
 
-	if (0 < nb_positions)
+	if (nb_positions)
 		positions[out_position] = UINT32_MAX;
 
 	record->score = max_score;
@@ -685,6 +700,10 @@ main(int argc, char *argv[])
 			opt_delim = '\0';
 			break;
 
+		case 'A':
+			opt_delim = '^' - '@';
+			break;
+
 		case '1':
 			opt_auto_accept_only = true;
 			break;
@@ -729,10 +748,6 @@ main(int argc, char *argv[])
 
 		case 's':
 			opt_sort = false;
-			break;
-
-		case 'u':
-			opt_delim = '^' - '@';
 			break;
 
 		case '?':
