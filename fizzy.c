@@ -1,12 +1,15 @@
 #define _POSIX_C_SOURCE 200809
 
+#include "config.h"
+
 #include <stdio.h>
 
 #include <readline/readline.h>
 
-#include <ctype.h>
+#include <assert.h>
 #include <curses.h>
 #include <getopt.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -16,23 +19,15 @@
 #include <term.h>
 #include <unistd.h>
 
+#if HAVE_OMP
+# include <omp.h>
+#endif
+
 enum {
 	QUERY_SIZE_MAX = 32,
-	MATCH_RANGE_MAX = UINT8_MAX,
 };
 
-#define REPEAT1(i) xmacro(i)
-#define REPEAT2(i) REPEAT1(i) REPEAT1(1 + i)
-#define REPEAT4(i) REPEAT2(i) REPEAT2(2 + i)
-#define REPEAT8(i) REPEAT4(i) REPEAT4(4 + i)
-#define REPEAT16(i) REPEAT8(i) REPEAT8(8 + i)
-#define REPEAT32(i) REPEAT16(i) REPEAT16(16 + i)
-#define REPEAT64(i) REPEAT32(i) REPEAT32(32 + i)
-#define REPEAT128(i) REPEAT64(i) REPEAT64(64 + i)
-#define REPEAT256(i) REPEAT128(i) REPEAT128(128 + i)
-
 static char opt_delim = '\n';
-static char const *opt_prefix_format = NULL;
 static bool opt_prefix_alpha = false;
 static bool opt_print_changes = false;
 static bool opt_interactive = true;
@@ -46,103 +41,179 @@ static FILE *tty;
 
 struct record {
 	uint32_t score;
-	size_t index;
-	size_t len;
+	uint32_t index;
+	uint32_t size;
 	uint8_t bytes[];
 };
 
-#if 0
-# define D(...) printf(__VA_ARGS__)
-#else
-# define D(...) ((void)0)
-#endif
-
-static size_t nrecords, nmatches;
+static uint32_t nb_total_records, nb_records, nb_matches;
 static struct record **records;
 
 #define BITSET_SIZE(n) (((n) + (CHAR_BIT - 1)) / CHAR_BIT)
+#define BITSET_OP_(x, op, bit, i) (((x)[(size_t)(i) / CHAR_BIT]) op ((bit) << ((size_t)(i) % CHAR_BIT)))
+#define BITSET_SET_IF(x, i, cond) BITSET_OP_(x, |=, !!(cond), i)
+#define BITSET_SET(x, i) BITSET_SET_IF(x, i, 1)
+#define BITSET_TEST(x, i) BITSET_OP_(x, &, 1, i)
 
 static void
-add_record(char const *buf, size_t bufsz, char const *prefix, size_t prefixsz)
+add_record(char const *pre, size_t presz, char const *buf, size_t bufsz)
 {
-	size_t len = prefixsz + bufsz;
-	size_t sz = offsetof(struct record, bytes[BITSET_SIZE(len) + len]);
-	struct record *record = malloc(sz);
+	uint32_t sz = presz + bufsz;
+	uint32_t allocsz = offsetof(struct record, bytes[BITSET_SIZE(sz) + sz]);
+	struct record *record = malloc(allocsz);
 	if (!record)
 		abort();
 
-	record->score = 0;
-	record->index = nrecords;
-	record->len = len;
-	memset(record->bytes, 0, BITSET_SIZE(len));
-	uint8_t *str = record->bytes + BITSET_SIZE(len);
-	memcpy(str, prefix, prefixsz);
-	memcpy(record->bytes + BITSET_SIZE(len) + prefixsz, buf, bufsz);
+	record->index = nb_total_records;
+	record->size = sz;
+	memset(record->bytes, 0, BITSET_SIZE(sz));
+	uint8_t *str = record->bytes + BITSET_SIZE(sz);
+	memcpy(str, pre, presz);
+	memcpy(record->bytes + BITSET_SIZE(sz) + presz, buf, bufsz);
 
 	bool escape = false;
-	for (size_t i = 0; i < len; ++i) {
+	for (uint32_t i = 0; i < sz; ++i) {
 		uint8_t c = str[i];
 
 		escape |= ('[' - '@') == c;
 
 		bool control = c < ' ';
 		bool ignore = control || escape;
-		record->bytes[i / CHAR_BIT] |= ignore << (i % CHAR_BIT);
+		BITSET_SET_IF(record->bytes, i, ignore);
+
+		if ('\r' == c)
+			for (uint32_t j = 0; j < i; ++j)
+				BITSET_SET(record->bytes, j);
 
 		/* End of SGR sequence. */
 		escape &= 'm' != c;
 	}
 
 	/* Allocate 2^x sizes. */
-	if (!(nrecords & (nrecords - 1))) {
-		records = realloc(records, (2 * nrecords + !nrecords) * sizeof *records);
+	if (!(nb_total_records & (nb_total_records - 1))) {
+		uint32_t nb_next = 2 * nb_total_records + !nb_total_records;
+		records = realloc(records, nb_next * sizeof *records);
 		if (!records)
 			abort();
 	}
-	records[nrecords++] = record;
+	records[nb_total_records++] = record;
 }
 
-static uint8_t const BONUS[] = {
+enum char_class {
+	CC_NONE,
+	CC_FIELD_BREAK,
+	CC_WORD_BREAK,
+	CC_SUBWORD_BREAK,
+	CC_SPECIAL,
+	CC_LOWER,
+	CC_UPPER,
+	CC_NB,
+};
+
+#define REPEAT1(i) xmacro(i)
+#define REPEAT2(i) REPEAT1(i) REPEAT1(1 + i)
+#define REPEAT4(i) REPEAT2(i) REPEAT2(2 + i)
+#define REPEAT8(i) REPEAT4(i) REPEAT4(4 + i)
+#define REPEAT16(i) REPEAT8(i) REPEAT8(8 + i)
+#define REPEAT32(i) REPEAT16(i) REPEAT16(16 + i)
+#define REPEAT64(i) REPEAT32(i) REPEAT32(32 + i)
+#define REPEAT128(i) REPEAT64(i) REPEAT64(64 + i)
+#define REPEAT256(i) REPEAT128(i) REPEAT128(128 + i)
+
+static uint8_t const CLASSIFY[] = {
 #define xmacro(c) \
-	  '\0' == c ? 4 /* start of line */ \
-	: '\t' == c ? 4 /* field separator */ \
-	: '/' == c ? 3 /* file paths */ \
-	: ' ' == c ? 3 /* word separator */ \
-	: 'A' <= c && c <= 'Z' ? 2 /* camelCase */ \
-	: '_' == c ? 2 /* snake_case */ \
-	: '-' == c ? 2 /* snake-case */ \
-	: '.' == c ? 2 /* file extension */ \
-	: ':' == c ? 2 /* file:line:col */ \
-	: '$' == c ? 1 /* $var */ \
-	: '(' == c ? 1 /* (stuff) */ \
-	: '[' == c ? 1 /* [tag] */ \
-	: '#' == c ? 1 /* #ticket, */ \
-	: 0,
+	'\0' == c || \
+	'\t' == c || \
+	('_' - '@') == c ? CC_FIELD_BREAK : \
+	' ' == c || \
+	'.' == c || \
+	'/' == c ? CC_WORD_BREAK : \
+	'_' == c || \
+	'-' == c ? CC_SUBWORD_BREAK : \
+	':' == c || \
+	'$' == c || \
+	'(' == c || \
+	'[' == c || \
+	'#' == c ? CC_SPECIAL : \
+	'a' <= c && c <= 'z' ? CC_LOWER : \
+	'A' <= c && c <= 'Z' ? CC_UPPER : \
+	CC_NONE,
 	REPEAT256(0)
 #undef xmacro
 };
 
-uint32_t const GAP_PENALTY = 50;
-uint32_t const TRAILING_GAP_PENALTY = 1;
+#define CC_ALL(x) \
+	[CC_NONE] = (x), \
+	[CC_FIELD_BREAK] = (x), \
+	[CC_WORD_BREAK] = (x), \
+	[CC_SUBWORD_BREAK] = (x), \
+	[CC_SPECIAL] = (x), \
+	[CC_LOWER] = (x), \
+	[CC_UPPER] = (x) \
+
+/* Independent from bonuses, relative to other penalties. */
+static uint32_t const GAP_PENALTY = 1;
+/* A bit less than subword match. */
+static uint32_t const CONT_BONUS = 0;
+static uint32_t const REPEAT_BONUS = 10;
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverride-init"
+static uint8_t const BONUS[CC_NB][CC_NB] = {
+	/* [previous] { [current] = bonus }. */
+	[CC_NONE] = {
+		CC_ALL(1),
+		[CC_UPPER] = 4,
+	},
+	[CC_FIELD_BREAK] = {
+		CC_ALL(10),
+	},
+	[CC_WORD_BREAK] = {
+		CC_ALL(8),
+	},
+	[CC_SUBWORD_BREAK] = {
+		CC_ALL(5),
+	},
+	[CC_SPECIAL] = {
+		CC_ALL(2),
+	},
+	[CC_LOWER] = {
+		CC_ALL(1),
+		/* camelCase */
+		[CC_UPPER] = 6,
+	},
+	[CC_UPPER] = {
+		CC_ALL(1),
+		[CC_UPPER] = 5, /* SCREAMINGCase */
+	},
+};
+#pragma GCC diagnostic pop
 
 static void
-score_record(struct record *record, size_t positions[static QUERY_SIZE_MAX])
+score_record(struct record *record, uint32_t (*positions)[QUERY_SIZE_MAX + 1])
 {
-	uint32_t scores[QUERY_SIZE_MAX][MATCH_RANGE_MAX];
-	uint8_t shifts[QUERY_SIZE_MAX][MATCH_RANGE_MAX];
-
 	record->score = 0;
+	if (positions)
+		(*positions)[0] = UINT32_MAX;
 
-	size_t n = record->len;
-	uint8_t const *str = record->bytes + BITSET_SIZE(record->len);
+	uint32_t n = record->size;
+	uint8_t const *const str = record->bytes + BITSET_SIZE(record->size);
 
-	uint8_t const *ptr = str;
-	uint8_t const *end = ptr + n;
+	uint8_t in_query[BITSET_SIZE(UINT8_MAX + 1)];
+	memset(in_query, 0, sizeof in_query);
 
-	size_t row = 0;
-	for (char const *q = opt_query; *q; ++q, ++row) {
-		size_t i;
-		for (;;) {
+	uint32_t m = 0;
+	for (uint8_t const *q = (uint8_t *)opt_query,
+	     *ptr = str,
+	     *end = ptr + n;
+	     *q;
+	     ++q, ++m)
+	{
+		BITSET_SET(in_query, *q);
+		if ('a' <= *q && *q <= 'z')
+			BITSET_SET(in_query, *q - 'a' + 'A');
+
+		for (uint32_t i;;) {
 			uint8_t const *p = memchr(ptr, *q, end - ptr);
 
 			if ('a' <= *q && *q <= 'z') {
@@ -151,138 +222,159 @@ score_record(struct record *record, size_t positions[static QUERY_SIZE_MAX])
 					ptr = p;
 			} else
 				ptr = p;
-			if (!ptr)
+			if (!ptr) {
 				return;
+			}
 
 			i = ptr - str;
 			++ptr;
 
-			if (!(record->bytes[i / CHAR_BIT] & (1 << i % CHAR_BIT)))
+			if (!BITSET_TEST(record->bytes, i))
 				break;
 		}
-
-		positions[row] = i;
 	}
 
-	record->score = 1024;
-
-	if (!row) {
-		positions[0] = SIZE_MAX;
+	if (!m) {
+		record->score = 1;
 		return;
 	}
 
-	D("%.*s\n", (int)n, str);
+	__builtin_prefetch(record->bytes, 1, 1);
+	__builtin_prefetch(str, 1, 1);
 
-	row = 0;
-	D("  ");
-	for (size_t x = 0; x < n; ++x)
-		D("          %c", isprint(str[x]) ? str[x] : '.');
-	D("\n");
+	/*
+	 *  subject string
+	 * Q j i -> n
+	 * U ^
+	 * E |
+	 * R k
+	 * Y m
+	 */
 
-	for (char const *q = opt_query; *q; ++q, ++row) {
-		size_t skip = positions[row];
-		D("%c:", *q);
+	uint32_t max_paths[QUERY_SIZE_MAX][QUERY_SIZE_MAX];
+	uint32_t max_scores[QUERY_SIZE_MAX];
+	uint64_t matched = 0;
 
-		/* for (size_t x = 0; x < skip - positions[0]; ++x)
-			printf("     "); */
+	memset(max_scores, 0, sizeof max_scores);
 
-		uint32_t max = 0;
-		uint8_t max_col = 0;
-		for (size_t col = 0; col < n; ++col) {
-			if (!row || !col)
-				;
-			else if (max <= scores[row - 1][col - 1]) {
-				max = scores[row - 1][col - 1];
-				max_col = col - 1;
-			}
+	uint32_t max_score = 0;
+	uint32_t k = 1;
+	uint32_t jumps = 0;
 
-			int B = 50 * GAP_PENALTY;
-			/proded
-			/camelCase
-			uint32_t bonus = BONUS[0 < col ? str[col - 1] : '\0'] * B;
+	enum char_class cc_prev = CC_FIELD_BREAK;
+	for (uint32_t i = 0; i < n; ++i) {
+		if (BITSET_TEST(record->bytes, i))
+			continue;
 
-			/* No double bonus. Bonus is only for otherwise low quality matches. */
-#if 0
-			CAPITAL_LETTERS
-			if (bonus <= BONUS[str[col]])
-				bonus = 0;
-#endif
+		uint8_t c = str[i];
+		enum char_class cc_cur = CLASSIFY[c];
+		uint32_t bonus = BONUS[cc_prev][cc_cur];
+		cc_prev = cc_cur;
 
-			bool z = 'a' <= *q && *q <= 'z' && (*q ^ ' ') == str[col];
-			uint32_t self = *q == str[col] || z
-				? (
-					max +
-					bonus +
-					((z && 'A' <= str[col] && str[col] <= 'Z') ? 1 + 1 : 1) * B +
-					(0 < row && 0 < col ? scores[row - 1][col - 1] / 2 /* Continous. */ : 0)
-				)
+		uint32_t const bonus_mult = 32 * GAP_PENALTY;
+		bonus *= bonus_mult;
+
+		/* Speed of light squared. */
+		uint8_t c2 = 'A' <= c && c <= 'Z' ? c - 'A' + 'a' : c;
+
+		++jumps;
+
+		uint64_t prev_matched = matched;
+		matched = 0;
+
+		if (!(BITSET_TEST(in_query, c) ||
+		      BITSET_TEST(in_query, c2)))
+			continue;
+
+		/* Scores fade away in the distance. */
+		for (uint32_t j = 0; j < k; ++j)
+			max_scores[j] = jumps * GAP_PENALTY < max_scores[j]
+				? max_scores[j] - jumps * GAP_PENALTY
 				: 0;
+		jumps = 0;
 
-			if (col < skip) {
-				self = 0;
-			}
+		/* Go backwards so we will see the previous state of an upper
+		 * cell. */
+		for (uint32_t j = k; j > 0;) {
+			uint8_t q = opt_query[--j];
 
-			bool ignore = record->bytes[col / CHAR_BIT] & (1 << (col % CHAR_BIT));
-
-			if (ignore)
-				self = 0;
-
-			shifts[row][col] = max_col;
-
-			scores[row][col] = self;
-			D("%c%6d(%2d)", bonus ? '+' : ' ', self, max_col);
-
-			if (ignore)
+			if (!(q == c || q == c2))
 				continue;
-			if (GAP_PENALTY < max)
-				max -= GAP_PENALTY;
+
+			uint32_t score = 0;
+			/* Best score up to the prefix string. */
+			score += max_scores[j];
+			/* Bonus for matching this particular position. */
+			score += bonus;
+			/* Bonus for continuous match. */
+			if (0 < j && (prev_matched & (1 << (j - 1))))
+				score += CONT_BONUS;
+
+			if (j + 1 == k)
+				++k;
+
+			matched |= 1 << j;
+
+			if (max_scores[j + 1] < score) {
+				max_scores[j + 1] = score;
+				/* Give higher score to reoccurrances. */
+				if (j + 1 == m) {
+#if 0
+					/* Too much noize because random letters match. */
+					max_scores[0] += score;
+#else
+					max_scores[0] += REPEAT_BONUS * bonus_mult;
+#endif
+					max_score = score;
+				}
+
+				/* Only the first `j * sizeof(uint32_t)` bytes
+				 * are needed but it's faster with known size. */
+				if (0 < j)
+					memcpy(max_paths[j], max_paths[j - 1], sizeof *max_paths);
+				max_paths[j][j] = i;
+			}
 		}
-		D("\n");
 	}
 
-	uint32_t last_max = 0;
-	uint8_t last_max_col;
-	for (size_t col = 0; col < n; ++col) {
-		uint32_t score = scores[row - 1][col];
-		if (!score)
-			continue;
-		uint32_t penalty = (n - col - 1) * TRAILING_GAP_PENALTY;
-		if (score <= penalty)
-			continue;
-		score -= penalty;
-		if (last_max < score) {
-			last_max = score;
-			last_max_col = col;
-		}
+	if (positions) {
+		memcpy(*positions, max_paths[m - 1], sizeof *max_paths);
+		(*positions)[m] = UINT32_MAX;
 	}
 
-	record->score = last_max;
-
-	positions[row] = 0;
-	positions[row - 1] = last_max_col;
-	D("o[%d]=%d\n", row - 1, last_max_col);
-	while (row > 1) {
-		last_max_col = shifts[--row][last_max_col];
-		positions[row - 1] = last_max_col;
-		D("[%d]=%d\n", row - 1, last_max_col);
-	}
-	D("\n");
+	record->score = max_score;
+	assert(0 < record->score);
 }
 
 static void
-score_records(void)
+score_all(void)
 {
-	nmatches = 0;
-	for (size_t i = 0; i < nrecords; ++i) {
+	static char cur_query[QUERY_SIZE_MAX + 1 /* NUL */];
+
+	bool subquery = strstr(opt_query, cur_query);
+
+	uint32_t n = subquery ? nb_matches : nb_records;
+
+	memcpy(cur_query, opt_query, sizeof cur_query);
+
+	/* Thread number can be controlled by setting OMP_NUM_THREADS=2
+	 * environment variable. */
+#pragma omp parallel for schedule(dynamic)
+	for (uint32_t i = 0; i < n; ++i) {
 		struct record *record = records[i];
-		size_t positions[QUERY_SIZE_MAX];
-		score_record(record, positions);
-		if (record->score) {
-			struct record *t = records[nmatches];
-			records[nmatches] = record;
-			records[i] = t;
-			++nmatches;
-		}
+		score_record(record, NULL);
+	}
+
+	nb_matches = 0;
+	for (uint32_t i = 0; i < n; ++i) {
+		struct record *record = records[i];
+		if (!record->score)
+			continue;
+
+		struct record *t = records[nb_matches];
+		records[nb_matches] = record;
+		records[i] = t;
+		++nb_matches;
 	}
 }
 
@@ -311,15 +403,15 @@ compare_score(void const *px, void const *py)
 }
 
 static void
-sort_records(void)
+sort_all(void)
 {
 	if (!opt_sort)
 		return;
-	qsort(records, nmatches, sizeof *records, compare_score);
+	qsort(records, nb_matches, sizeof *records, compare_score);
 }
 
 static char const *
-generate_word(size_t i, char a, char z)
+gen_word(uint32_t i, char a, char z)
 {
 	static char buf[100];
 
@@ -340,83 +432,116 @@ read_records(FILE *stream)
 	for (ssize_t linelen;
 	     0 < (linelen = getdelim(&line, &linesz, opt_delim, stream));)
 	{
-		char prefix[100];
-		int prefixlen = 0;
+		char pre[100];
+		int presz = 0;
 		if (opt_prefix_alpha) {
-			char const *word = generate_word(nrecords, 'A', 'Z');
-			prefixlen = sprintf(prefix, opt_prefix_format, word);
+			char const *word = gen_word(nb_total_records, 'A', 'Z');
+			presz = sprintf(pre, "%s\t", word);
 		}
-		add_record(line, linelen - 1 /* CR */, prefix, prefixlen);
+		add_record(pre, presz, line, linelen - 1 /* CR */);
 	}
 	free(line);
 }
 
 static void
-print_records(size_t nlines)
+print_records(int nlines)
 {
-	for (size_t i = 0; i < nmatches && i < nlines; ++i) {
+	if (nlines < 0)
+		return;
+
+	for (uint32_t i = 0; i < nb_matches && i < (uint32_t)nlines; ++i) {
 		fputs("\n\x1b[m", tty);
 
 		struct record *record = records[i];
-		size_t positions[QUERY_SIZE_MAX];
-		score_record(record, positions);
-		/* fprintf(tty, "(%5d) ", record->score); */
-		size_t k = 0;
-		bool hi = false;
-		for (size_t j = 0; j < record->len; ++j) {
-			bool matched = j == positions[k];
-			if (matched)
+		uint32_t positions[QUERY_SIZE_MAX + 1];
+		score_record(record, &positions);
+
+#if 0
+		fprintf(tty, "(%5d) ", record->score);
+#endif
+
+		uint8_t const *str = record->bytes + BITSET_SIZE(record->size);
+		uint32_t start = 0;
+		for (uint32_t k = 0;; ++k) {
+			uint32_t end = positions[k];
+			if (UINT32_MAX == end)
+				break;
+
+			fwrite(str + start, 1, end - start, tty);
+
+			while ((start = positions[k] + 1) == positions[k + 1])
 				++k;
-			if (hi != matched) {
-				hi = matched;
-				fputs(hi ? "\x1b[7m" : "\x1b[27m", tty);
-			}
-			fputc(((uint8_t*)(record->bytes + BITSET_SIZE(record->len)))[j], tty);
+
+			fputs("\x1b[7m", tty);
+			fwrite(str + end, 1, start - end, tty);
+			fputs("\x1b[27m", tty);
 		}
+
+		fwrite(str + start, 1, record->size - start, tty);
 	}
 }
 
 static void
-print_record(struct record const *record)
+emit_record(struct record const *record)
 {
 	if (opt_print_indices)
-		printf("%zu", record->index);
+		printf("%"PRIu32, record->index);
 	else
-		fwrite(record->bytes + BITSET_SIZE(record->len), 1, record->len, stdout);
+		fwrite(record->bytes + BITSET_SIZE(record->size), 1, record->size, stdout);
 	fputc(opt_delim, stdout);
 }
 
 static bool
-print_one(void)
+emit_one(void)
 {
-	if (!nmatches)
+	if (!nb_matches)
 		return false;
-	print_record(records[0]);
+
+	emit_record(records[0]);
 	fflush(stdout);
 	return true;
 }
 
 static bool
-print_all(void)
+emit_all(void)
 {
-	if (!nmatches)
+	if (!nb_matches)
 		return false;
-	for (size_t i = 0; i < nmatches; ++i) {
-		print_record(records[i]);
-	}
+
+	for (uint32_t i = 0; i < nb_matches; ++i)
+		emit_record(records[i]);
 	fflush(stdout);
 	return true;
 }
 
 static void
-accept_one(char *line)
+accept_one(void)
 {
-	(void)line;
-	exit(print_one() ? EXIT_SUCCESS : EXIT_FAILURE);
+	exit(emit_one() ? EXIT_SUCCESS : EXIT_FAILURE);
 }
 
 static void
-run_tui()
+submit_line(char *line)
+{
+	(void)line;
+	accept_one();
+}
+
+static int
+filter_matches(int count, int c)
+{
+	(void)count, (void)c;
+	nb_records = nb_matches;
+	rl_replace_line("", true);
+
+	if (1 == nb_records)
+		accept_one();
+
+	return 1;
+}
+
+static void
+run_tui(void)
 {
 	tty = fopen(ctermid(NULL), "w+");
 	if (!tty) {
@@ -429,24 +554,28 @@ run_tui()
 	rl_instream = tty;
 	rl_outstream = tty;
 
-	rl_callback_handler_install(opt_prompt, &accept_one);
+	rl_callback_handler_install(opt_prompt, submit_line);
 
 	fputs("\x1b[?7l", tty);
 
 	rl_insert_text(opt_query);
 
 	rl_resize_terminal();
-	rl_bind_key('\t', rl_insert);
+	/* rl_bind_key(' ', filter_matches); */
+	rl_bind_key('\t', filter_matches);
 
 	for (;;) {
 		fputs("\x1b[H\x1b[2J\n\x1b[m", tty);
 		int rows, cols;
 		rl_get_screen_size(&rows, &cols);
 
-		score_records();
-		sort_records();
+		score_all();
+		sort_all();
 
-		fprintf(tty, "[%zu/%zu] %s", nmatches, nrecords, opt_header);
+		if (nb_records == nb_total_records)
+			fprintf(tty, "[%"PRIu32"/%"PRIu32"] %s", nb_matches, nb_records, opt_header);
+		else
+			fprintf(tty, "[%"PRIu32"/%"PRIu32" (%"PRIu32")] %s", nb_matches, nb_records, nb_total_records, opt_header);
 
 		print_records(rows - 2);
 
@@ -455,7 +584,7 @@ run_tui()
 		fflush(tty);
 
 		if (opt_print_changes)
-			print_one();
+			emit_one();
 
 		rl_forced_update_display();
 		rl_callback_read_char();
@@ -467,15 +596,14 @@ run_tui()
 int
 main(int argc, char *argv[])
 {
-	for (int opt; -1 != (opt = getopt(argc, argv, "0acfh:ilp:q:"));)
+	for (int opt; -1 != (opt = getopt(argc, argv, "0acfh:jip:q:s"));)
 		switch (opt) {
 		case '0':
 			opt_delim = '\0';
 			break;
 
 		case 'a':
-			opt_prefix_format = "%s\t";
-			opt_prefix_alpha = true;
+			opt_delim = '^' - '@';
 			break;
 
 		case 'c':
@@ -488,6 +616,10 @@ main(int argc, char *argv[])
 
 		case 'h':
 			opt_header = optarg;
+			break;
+
+		case 'j':
+			opt_prefix_alpha = true;
 			break;
 
 		case 'i':
@@ -512,6 +644,8 @@ main(int argc, char *argv[])
 			return EXIT_FAILURE;
 		}
 
+	setvbuf(stdout, NULL, _IOFBF, BUFSIZ);
+
 	FILE *input;
 	if (isatty(STDIN_FILENO))
 		input = popen("find", "r");
@@ -523,12 +657,25 @@ main(int argc, char *argv[])
 	}
 
 	read_records(input);
+	nb_matches = nb_total_records;
+	nb_records = nb_total_records;
+
+#if 0
+	for (int i = 0; i < 3; ++i)
+		for (int i = 20; --i > 0;) {
+			strcpy(opt_query, "heeeeeeeeeeeeeeeeeeeeeeeee");
+			opt_query[i] = '\0';
+			/* sprintf(opt_query, "-/%d%d%d", i, i, i); */
+			score_all();
+		}
+	return 0;
+#endif
 
 	if (opt_interactive) {
 		run_tui();
 	} else {
-		score_records();
-		sort_records();
-		print_all();
+		score_all();
+		sort_all();
+		emit_all();
 	}
 }
