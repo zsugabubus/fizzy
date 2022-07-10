@@ -661,6 +661,7 @@ run_tui(void)
 	fputs("\x1b[?7l", tty);
 
 	rl_insert_text(opt_query);
+	rl_resize_terminal();
 
 	for (;;) {
 		fputs("\x1b[H\x1b[2J\n\x1b[m", tty);
