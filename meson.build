@@ -22,3 +22,24 @@ executable('fizzy',
 	],
 	install: true,
 )
+
+pod2man = find_program('pod2man')
+
+custom_target(
+	'man',
+	output: meson.project_name() + '.1',
+	input: 'README.pod',
+	command: [
+		pod2man,
+		'--section=1',
+		'--center=Fuzzy searcher',
+		'--name=' + meson.project_name(),
+		'--release=@1@ @0@'.format(
+			meson.project_name(),
+			meson.project_version(),
+		),
+		'@INPUT@', '@OUTPUT@'
+	],
+	install: true,
+	install_dir: get_option('mandir') / 'man1'
+)

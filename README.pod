@@ -1,0 +1,179 @@
+=head1 NAME
+
+fizzy - command-line fuzzy filter
+
+=head1 SYNOPSIS
+
+B<fizzy> [OPTIONS]
+
+=head1 DESCRIPTION
+
+B<fizzy> is a bare minimal command-line tool to filter input records based on
+user queries and print selected ones to standard output.
+
+B<fizzy> exposes no limitations on input record length, but restricts queries
+to 32 bytes. The good news is that latter limit is practically unreachable
+because queries tend to be a lot shorter than this. However, if needed,
+B<fuzzy-filter-matched> function (default bound to B<SPACE>) can be used to
+set a filter to currently matched records, excluding all non-matching ones from
+further queries.
+
+B<fizzy> has UTF-8 support but only in the ASCII range supports
+case-insensitive matches (e.g. "o" matches "O").
+
+=head1 INTERFACE
+
+B<fizzy> uses a fullscreen interface that looks like the following:
+
+  READLINE
+  [AVAILABLE/FILTERED (TOTAL)] HEADER
+  RECORD0
+  RECORD1
+  ...
+
+=head1 OPTIONS
+
+The following options are accepted:
+
+=over 4
+
+=item -0
+
+Use ASCII NIL character as record separator. Default is LF.
+
+=item -A
+
+Use ASCII RS as record separator. Refer to B<-0>.
+
+=item -1
+
+Execute B<fizzy-accept-only> immediately after reading inputs.
+
+=item -a
+
+Prefix each line with some text suitable for quick jumping.
+
+=item -c
+
+Execute B<fizzy-emit-one> on change.
+
+=item -f
+
+Filter mode. Filter mode is not interactive thus query must be supplied via B<-q>.
+
+=item -h HEADER
+
+Set header.
+
+=item -i
+
+Print 0-based indices instead of echoing back input records.
+
+=item -j THREADS
+
+Same as setting environment variable B<OMP_NUM_THREADS>, except it will
+complain if OpenMP support was disabled at compile.
+
+=item -n
+
+Set readline application name. Default: B<Fizzy>.
+
+Example:
+  B<fizzy> -n MyFizzy
+  ...
+  $if MyFizzy
+  # ...
+  $endif
+
+=item -p
+
+Set readline prompt. Default: B<< "> " >>.
+
+=item -q QUERY
+
+Set initial query.
+
+=item -s
+
+Disable sorting.
+
+=back
+
+=head1 READLINE
+
+Line handler is set to B<fizzy-emit-one>.
+
+=head2 Configuration
+
+The following readline configuration is used by default:
+
+  SPACE: fizzy-filter-matched
+
+=head2 Functions
+
+The following readline functions are registered:
+
+=over 4
+
+=item B<fizzy-filter-reset>
+
+Set filter to all records and clear line.
+
+=item B<fizzy-filter-matched>
+
+Set filter to matched records and clear line.
+
+=item B<fizzy-emit-one>
+
+Print (first) record to standard output.
+
+=item B<fizzy-emit-all>
+
+Similar to B<fizzy-emit-one> but for all records.
+
+=item B<fizzy-accept-one>
+
+Execute B<fizzy-emit-one> and exit. If no records are available, B<fizzy> will
+exit with failure.
+
+=item B<fizzy-accept-only>
+
+Execute B<fizzy-accept-one> if only a single record is available.
+
+=item B<fizzy-accept-all>
+
+Similar to B<fizzy-accept-one> but for all records.
+
+=back
+
+=head1 EXAMPLES
+
+Open a file
+
+  $EDITOR $(fizzy)
+
+Set custom bindings in .inputrc
+
+  $if Fizzy # Refer to -n to change name.
+  +: fizzy-emit-one
+  $endif
+
+=head1 ENVIRONMENT
+
+=over 4
+
+=item OMP_*
+
+Refer to OpenMP.
+
+=back
+
+=head1 BUGS
+
+Report bugs to L<https://gitlab.com/zsugabubus/fizzy>.
+
+=head1 COPYRIGHT
+
+This is free and unencumbered software released into the public domain.
+
+=cut
