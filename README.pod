@@ -8,22 +8,24 @@ B<fizzy> [OPTIONS]
 
 =head1 DESCRIPTION
 
-B<fizzy> is a bare minimal command-line tool to filter input records based on
-user queries and print selected ones to standard output.
+B<fizzy> is a minimal command-line tool to filter input records based on
+(usually interactive) user queries and print some of them to standard output.
 
 B<fizzy> exposes no limitations on input record length, but restricts queries
-to 32 bytes. The good news is that latter limit is practically unreachable
-because queries tend to be a lot shorter than this. However, if needed,
-B<fuzzy-filter-matched> function (default bound to B<SPACE>) can be used to
-set a filter to currently matched records, excluding all non-matching ones from
-further queries.
+to 32 bytes (what a nice number). The good news is that latter limit is
+practically unreachable because queries tend to be a lot shorter than this.
+However, if needed, B<fuzzy-filter-matched> function (default bound to
+B<SPACE>) can be used to exclude all non-matching records from further queries.
 
-B<fizzy> has UTF-8 support but only in the ASCII range supports
-case-insensitive matches (e.g. "o" matches "O").
+B<fizzy> has primitve UTF-8 support and only in the ASCII range capable of
+doing case-insensitive matchings (e.g. "o" matches "O").
+
+B<fizzy> can handle input containing ASCII control characters and supports ANSI
+SGR sequences (i.e. colored input).
 
 =head1 INTERFACE
 
-B<fizzy> uses a fullscreen interface that looks like the following:
+B<fizzy> uses a fullscreen terminal interface that looks like this:
 
   READLINE
   [AVAILABLE/FILTERED (TOTAL)] HEADER
