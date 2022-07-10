@@ -681,7 +681,7 @@ run_tui(void)
 
 		print_records(rows - 2);
 
-		fputs("\x1b[H\x1b[;1m", tty);
+		fputs("\x1b[H\x1b[m", tty);
 
 		fflush(tty);
 
