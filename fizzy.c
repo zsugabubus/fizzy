@@ -6,7 +6,6 @@
 
 #include <readline/readline.h>
 
-#include <assert.h>
 #include <curses.h>
 #include <getopt.h>
 #include <inttypes.h>
@@ -16,27 +15,32 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <term.h>
 #include <unistd.h>
 
 #if HAVE_OMP
 # include <omp.h>
 #endif
 
+#define IF1(cond, if_true) IF1_(cond, if_true)
+#define IF1_(cond, if_true) IF1_##cond##_(if_true)
+#define IF1_0_(x)
+#define IF1_1_(x) x
+
 enum {
 	QUERY_SIZE_MAX = 32,
 };
 
+static char const *opt_rl_name = "Fizzy";
+static char const *opt_prompt = "> ";
+static char const *opt_header = "";
+static char opt_query[QUERY_SIZE_MAX + 1 /* NUL */];
 static char opt_delim = '\n';
+static bool opt_interactive = true;
+static bool opt_sort = true;
 static bool opt_prefix_alpha = false;
 static bool opt_print_changes = false;
-static bool opt_interactive = true;
-static char const *opt_header = "";
 static bool opt_print_indices = false;
-static char const *opt_prompt = "> ";
-static char opt_query[QUERY_SIZE_MAX + 1 /* NUL */];
-static bool opt_sort = true;
-static char const *opt_rl_name = "fizzy";
+static bool opt_auto_accept_only = false;
 
 static FILE *tty;
 
@@ -193,10 +197,10 @@ static void
 score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 {
 	record->score = 0;
-	if (0 < nb_positions)
-		positions[0] = UINT32_MAX;
 
 	uint32_t out_position = 0;
+	if (0 < nb_positions)
+		positions[0] = UINT32_MAX;
 
 	uint32_t n = record->size;
 	uint8_t const *const str = record->bytes + BITSET_SIZE(record->size);
@@ -288,8 +292,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 		      BITSET_TEST(in_query, c2)))
 			continue;
 
-		/* Scores fade away in the distance.
-		 * max_scores[0] is fix. */
+		/* Scores fade away in the distance. */
 		for (uint32_t j = 0; j < k; ++j)
 			max_scores[j] = jumps * GAP_PENALTY < max_scores[j]
 				? max_scores[j] - jumps * GAP_PENALTY
@@ -325,6 +328,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 					max_scores[0] += CONT_BONUS * bonus_mult;
 					max_score = score;
 
+					/* Append new matched cells. */
 					if (0 < nb_positions) {
 						if (nb_positions - j < out_position)
 							out_position = nb_positions - j;
@@ -443,7 +447,7 @@ read_records(FILE *stream)
 		int presz = 0;
 		if (opt_prefix_alpha) {
 			char const *word = gen_word(nb_total_records, 'A', 'Z');
-			presz = sprintf(pre, "%s\t", word);
+			presz = sprintf(pre, "%s:\t", word);
 		}
 		add_record(pre, presz, line, linelen - 1 /* CR */);
 	}
@@ -464,11 +468,6 @@ print_records(int nlines)
 		score_record(record, positions, sizeof positions / sizeof *positions);
 
 #if 0
-		for (uint32_t z = 0; UINT32_MAX != positions[z]; ++z)
-			assert(positions[z] < positions[z + 1]);
-#endif
-
-#if 1
 		fprintf(tty, "(%5d) ", record->score);
 #endif
 
@@ -498,8 +497,17 @@ emit_record(struct record const *record)
 {
 	if (opt_print_indices)
 		printf("%"PRIu32, record->index);
-	else
-		fwrite(record->bytes + BITSET_SIZE(record->size), 1, record->size, stdout);
+	else {
+		uint8_t const *str = record->bytes + BITSET_SIZE(record->size);
+		uint32_t size = record->size;
+		if (opt_prefix_alpha) {
+			uint8_t const *sep = memchr(str, '\t', size);
+			sep += 1;
+			size -= sep - str;
+			str = sep;
+		}
+		fwrite(str, 1, size, stdout);
+	}
 	fputc(opt_delim, stdout);
 }
 
@@ -511,6 +519,7 @@ emit_one(void)
 
 	emit_record(records[0]);
 	fflush(stdout);
+
 	return true;
 }
 
@@ -523,6 +532,7 @@ emit_all(void)
 	for (uint32_t i = 0; i < nb_matches; ++i)
 		emit_record(records[i]);
 	fflush(stdout);
+
 	return true;
 }
 
@@ -533,22 +543,80 @@ accept_one(void)
 }
 
 static void
-submit_line(char *line)
+accept_only(void)
+{
+	if (1 == nb_records)
+		accept_one();
+}
+
+static void
+accept_all(void)
+{
+	exit(emit_all() ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+static void
+fizzy_rl_handle_line(char *line)
 {
 	(void)line;
 	accept_one();
 }
 
 static int
-filter_matches(int count, int c)
+fizzy_rl_filter_reset(int count, int c)
+{
+	(void)count, (void)c;
+	nb_records = nb_total_records;
+	rl_replace_line("", true);
+	return 1;
+}
+
+static int
+fizzy_rl_filter_matched(int count, int c)
 {
 	(void)count, (void)c;
 	nb_records = nb_matches;
 	rl_replace_line("", true);
+	return 1;
+}
 
-	if (1 == nb_records)
-		accept_one();
+static int
+fizzy_rl_emit_one(int count, int c)
+{
+	(void)count, (void)c;
+	emit_one();
+	return 1;
+}
 
+static int
+fizzy_rl_emit_all(int count, int c)
+{
+	(void)count, (void)c;
+	emit_all();
+	return 1;
+}
+
+static int
+fizzy_rl_accept_one(int count, int c)
+{
+	(void)count, (void)c;
+	accept_one();
+	return 1;
+}
+
+static int
+fizzy_rl_accept_only(int count, int c)
+{
+	(void)count, (void)c;
+	accept_only();
+	return 1;
+}
+
+static int
+fizzy_rl_accept_all(int count, int c)
+{
+	(void)count, (void)c;
+	accept_all();
 	return 1;
 }
 
@@ -566,14 +634,20 @@ run_tui(void)
 	rl_instream = tty;
 	rl_outstream = tty;
 
-	rl_callback_handler_install(opt_prompt, submit_line);
+	rl_bind_key('\t', rl_insert);
+	rl_add_defun("fizzy-filter-reset", fizzy_rl_filter_reset, -1);
+	rl_add_defun("fizzy-filter-matched", fizzy_rl_filter_matched, ' ');
+	rl_add_defun("fizzy-emit-one", fizzy_rl_emit_one, -1);
+	rl_add_defun("fizzy-emit-all", fizzy_rl_emit_all, -1);
+	rl_add_defun("fizzy-accept-one", fizzy_rl_accept_one, -1);
+	rl_add_defun("fizzy-accept-only", fizzy_rl_accept_only, -1);
+	rl_add_defun("fizzy-accept-all", fizzy_rl_accept_all, -1);
+
+	rl_callback_handler_install(opt_prompt, fizzy_rl_handle_line);
 
 	fputs("\x1b[?7l", tty);
 
 	rl_insert_text(opt_query);
-
-	rl_resize_terminal();
-	rl_bind_key(' ', filter_matches);
 
 	for (;;) {
 		fputs("\x1b[H\x1b[2J\n\x1b[m", tty);
@@ -607,14 +681,18 @@ run_tui(void)
 int
 main(int argc, char *argv[])
 {
-	for (int opt; -1 != (opt = getopt(argc, argv, "0acfh:jinp:q:s"));)
+	for (int opt; -1 != (opt = getopt(argc, argv, "01acfh:inp:q:su" IF1(HAVE_OMP, "j:")));)
 		switch (opt) {
 		case '0':
 			opt_delim = '\0';
 			break;
 
+		case '1':
+			opt_auto_accept_only = true;
+			break;
+
 		case 'a':
-			opt_delim = '^' - '@';
+			opt_prefix_alpha = true;
 			break;
 
 		case 'c':
@@ -629,13 +707,15 @@ main(int argc, char *argv[])
 			opt_header = optarg;
 			break;
 
-		case 'j':
-			opt_prefix_alpha = true;
-			break;
-
 		case 'i':
 			opt_print_indices = true;
 			break;
+
+#if HAVE_OMP
+		case 'j':
+			omp_set_num_threads(atoi(optarg));
+			break;
+#endif
 
 		case 'n':
 			opt_rl_name = optarg;
@@ -653,10 +733,15 @@ main(int argc, char *argv[])
 			opt_sort = false;
 			break;
 
+		case 'u':
+			opt_delim = '^' - '@';
+			break;
+
 		case '?':
-		default:
-			fprintf(stderr, "unknown option: '%c'\n", opt);
 			return EXIT_FAILURE;
+
+		default:
+			abort();
 		}
 
 	setvbuf(stdout, NULL, _IOFBF, BUFSIZ);
@@ -674,6 +759,9 @@ main(int argc, char *argv[])
 	read_records(input);
 	nb_matches = nb_total_records;
 	nb_records = nb_total_records;
+
+	if (opt_auto_accept_only)
+		accept_only();
 
 #if 0
 	for (int i = 0; i < 3; ++i)
