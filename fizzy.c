@@ -479,7 +479,9 @@ read_records(FILE *stream)
 			char const *word = gen_word(nb_total_records, 'A', 'Z');
 			presz = sprintf(pre, "%s:\t", word);
 		}
-		add_record(pre, presz, line, linelen - 1 /* CR */);
+
+		linelen -= opt_delim == line[linelen - 1];
+		add_record(pre, presz, line, linelen);
 	}
 	free(line);
 }
