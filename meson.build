@@ -10,7 +10,7 @@ cc = meson.get_compiler('c')
 openmp_dep = dependency('openmp', required: get_option('openmp'))
 config.set10('HAVE_OMP', openmp_dep.found())
 
-executable('fizzy',
+fizzy = executable('fizzy',
 	'fizzy.c',
 	configure_file(
 		output: 'config.h',
@@ -43,3 +43,5 @@ custom_target(
 	install: true,
 	install_dir: get_option('mandir') / 'man1'
 )
+
+test('functional tests', find_program('check'))

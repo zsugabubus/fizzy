@@ -1,0 +1,108 @@
+#!/bin/sh -eu
+test -x ./fizzy
+PATH=.:$PATH
+
+T() {
+	stdin=$(cat)
+
+	echo "T $@"
+
+	printf %s "$stdin" |
+	fizzy -f "$@" >got
+
+	printf %s "$stdin" |
+	grep '^[0-9]' |
+	sort >expected
+
+	diff -yB expected got
+}
+
+# T works fine.
+! printf -- '-\tT works fine' | T
+printf '0\tT works fine' | T
+
+# Record separator appended to output.
+test "$(echo a)" = "$(printf a | fizzy -1)"
+
+# Sanity checks.
+printf '0\taaa' | T
+
+T -qx <<"EOF"
+1	xxxxx
+-	y
+0	xxxxxxxxxx
+EOF
+
+T -qabcd <<"EOF"
+0	./yyy/ABCD.xx
+1	./xxxxxxx.abcd
+EOF
+
+T -qa <<"EOF"
+0	/abxcCdxx/AbxcCdxx
+1	/abxcCdxx/XxXXDxxx
+EOF
+T -qab <<"EOF"
+0	/abxcCdxx/AbxcCdxx
+1	/abxcCdxx/XxXXDxxx
+EOF
+T -qabc <<"EOF"
+0	/abxcCdxx/AbxcCdxx
+1	/abxcCdxx/XxXXDxxx
+EOF
+T -qabcd <<"EOF"
+0	/abxcCdxx/AbxcCdxx
+1	/abxcCdxx/XxXXDxxx
+EOF
+T -qabcx <<"EOF"
+0	/abxcCdxx/XxXXDxxx
+1	/abxcCdxx/AbxcCdxx
+EOF
+
+T -qabcd <<"EOF"
+0	xxxxxxxxxxxxxxxxxxxxxxxxxx Abxxxx Cxxxxxxxx Dxxxxxxxx
+1	axxxxbxx cxxxx dx xxxxx axxxxbxx cxxxx dx
+EOF
+
+T -qabcde <<"EOF"
+0	AbcxxxxDexxxxx
+1	AbcxxxxXdexxx
+EOF
+
+T -qabac <<"EOF"
+0	/abxxXxxx/acxx
+1	/xxxxAbxx/acxx
+EOF
+
+T -qabc <<"EOF"
+0	AxxxxxBcxCxxx
+1	AxxxxxBcxxxCxxx
+2	AxxxxxBcxxx
+EOF
+
+T -qabc <<"EOF"
+0	axx/xxxxxxxxxb/ABCxxxx.xxx
+1	xxxxx/xxxx.abc
+2	axx/xxxxa/xxx/xxx-bxx-xxxxxxxx-xxcxxxx
+EOF
+
+T -qaba <<"EOF"
+0	xxxxxxxxxxxx/AxxxBxxxxxAxxxx
+1	axxxb/xxx/axxx
+EOF
+
+T -qaba <<"EOF"
+0	xxxxxxxxxxxx/AxxxBxxxxxAxxxx
+1	axxxb/xxx/axxx
+EOF
+
+# Length does not count.
+T -qabc <<"EOF"
+0	AbcxxxXxxx.y
+1	Abcxxx.y
+EOF
+# ...but more compact match wins.
+T -qabcy <<"EOF"
+0	Abcxxx.y
+1	AbcxxxXxxx.y
+EOF
