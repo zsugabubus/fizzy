@@ -156,39 +156,40 @@ static uint8_t const CLASSIFY[] = {
 	[CC_LOWER] = (x), \
 	[CC_UPPER] = (x) \
 
-/* Independent from bonuses, relative to other penalties. */
-static uint32_t const GAP_PENALTY = 1;
-/* A bit less than subword match. */
-static uint32_t const CONT_BONUS = 9;
-
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Woverride-init"
 static uint8_t const BONUS[CC_NB][CC_NB] = {
 	/* [previous] { [current] = bonus }. */
 	[CC_NONE] = {
 		CC_ALL(1),
-		[CC_UPPER] = 4,
+		[CC_UPPER] = 5,
 	},
 	[CC_FIELD_BREAK] = {
-		CC_ALL(10),
+		CC_ALL(60),
+		[CC_UPPER] = 60 + 5,
 	},
 	[CC_WORD_BREAK] = {
-		CC_ALL(8),
+		CC_ALL(40),
+		[CC_UPPER] = 40 + 5,
 	},
 	[CC_SUBWORD_BREAK] = {
-		CC_ALL(6),
+		CC_ALL(15),
+		[CC_UPPER] = 15 + 5,
 	},
 	[CC_SPECIAL] = {
-		CC_ALL(2),
+		CC_ALL(8),
+		[CC_UPPER] = 8 + 5,
 	},
 	[CC_LOWER] = {
 		CC_ALL(1),
+		/* randomtextwithlonelyletters */
+		[CC_LOWER] = 3, /* About the length of a syllable. */
 		/* camelCase */
-		[CC_UPPER] = 5,
+		[CC_UPPER] = 15 + 5,
 	},
 	[CC_UPPER] = {
 		CC_ALL(1),
-		[CC_UPPER] = 5, /* SCREAMINGCase */
+		[CC_UPPER] = 15, /* SCREAMINGCase */
 	},
 };
 #pragma GCC diagnostic pop
@@ -258,46 +259,51 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 	 */
 
 	uint32_t max_paths[QUERY_SIZE_MAX - 1][QUERY_SIZE_MAX];
-	uint32_t max_scores[QUERY_SIZE_MAX];
+	uint32_t max_scores[QUERY_SIZE_MAX + 1];
+	uint32_t max_bonuses[QUERY_SIZE_MAX + 1];
 	uint64_t matched = 0;
 
 	memset(max_scores, 0, sizeof max_scores);
+	memset(max_bonuses, 0, sizeof max_bonuses);
 
 	uint32_t max_score = 0;
 	uint32_t k = 1;
-	uint32_t jumps = 0;
+	uint32_t penalty = 0;
 
-	enum char_class cc_prev = CC_FIELD_BREAK;
+	uint32_t prev_bonus;
+	enum char_class prev_cc = CC_FIELD_BREAK;
+
 	for (uint32_t i = 0; i < n; ++i) {
 		if (BITSET_TEST(record->bytes, i))
 			continue;
 
 		uint8_t c = str[i];
-		enum char_class cc_cur = CLASSIFY[c];
-		uint32_t bonus = BONUS[cc_prev][cc_cur];
-		cc_prev = cc_cur;
-
-		uint32_t const bonus_mult = 10 * GAP_PENALTY;
-		bonus *= bonus_mult;
+		enum char_class cc = CLASSIFY[c];
+		uint32_t bonus = BONUS[prev_cc][cc];
+		prev_cc = cc;
 
 		/* Speed of light squared. */
 		uint8_t c2 = 'A' <= c && c <= 'Z' ? c - 'A' + 'a' : c;
 
-		++jumps;
+		++penalty;
 
 		uint64_t prev_matched = matched;
 		matched = 0;
 
 		if (!(BITSET_TEST(in_query, c) ||
 		      BITSET_TEST(in_query, c2)))
+		{
+			/* prev_bonus do not have to be reset because
+			 * prev_matched zeroed. */
 			continue;
+		}
 
-		/* Scores fade away in the distance. */
-		for (uint32_t j = 0; j < k; ++j)
-			max_scores[j] = jumps * GAP_PENALTY < max_scores[j]
-				? max_scores[j] - jumps * GAP_PENALTY
+		/* Scores fade away in the distance. Gap penalty is always 1. */
+		for (uint32_t j = 1; j < k; ++j)
+			max_scores[j] = penalty < max_scores[j]
+				? max_scores[j] - penalty
 				: 0;
-		jumps = 0;
+		penalty = 0;
 
 		/* Go backwards so we will see the previous state of an upper
 		 * cell. */
@@ -312,9 +318,17 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 			score += max_scores[j];
 			/* Bonus for matching this particular position. */
 			score += bonus;
+			/* Prefer match of the same kind. A distant continuation. */
+			if (max_bonuses[j] == bonus)
+				score += bonus;
 			/* Bonus for continuous match. */
-			if (0 < j && (prev_matched & (1 << (j - 1))))
-				score += CONT_BONUS;
+			if (0 < j && (prev_matched & (1 << (j - 1)))) {
+				/* ...xfGh... */
+				/* Copy cont bonus. */
+				if (bonus < prev_bonus)
+					bonus = prev_bonus;
+				score += bonus;
+			}
 
 			if (j + 1 == k)
 				++k;
@@ -324,6 +338,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 			if (score <= max_scores[j + 1])
 				continue;
 			max_scores[j + 1] = score;
+			max_bonuses[j + 1] = bonus;
 
 			if (j + 1 < m) {
 				/* Only the first `j * sizeof(uint32_t)` bytes
@@ -335,7 +350,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 			}
 
 			/* Give higher score to next occurrances. */
-			max_scores[0] += CONT_BONUS * bonus_mult;
+			max_scores[0] += 1;
 			max_score = score;
 
 			if (!nb_positions)
@@ -364,6 +379,8 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 			positions[out_position] = i;
 			out_position += 1;
 		}
+
+		prev_bonus = bonus;
 	}
 
 	if (nb_positions)
