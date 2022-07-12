@@ -33,6 +33,8 @@ enum {
 static char const *opt_rl_name = "Fizzy";
 static char const *opt_prompt = "> ";
 static char const *opt_header = "";
+static char const *opt_hi_start = "\x1b[7m";
+static char const *opt_hi_end = "\x1b[27m";
 static char opt_query[QUERY_SIZE_MAX + 1 /* NUL */];
 static char opt_delim = '\n';
 static bool opt_interactive = true;
@@ -512,9 +514,9 @@ print_records(int nlines)
 			while ((start = positions[k] + 1) == positions[k + 1])
 				++k;
 
-			fputs("\x1b[7m", tty);
+			fputs(opt_hi_start, tty);
 			fwrite(str + end, 1, start - end, tty);
-			fputs("\x1b[27m", tty);
+			fputs(opt_hi_end, tty);
 		}
 
 		fwrite(str + start, 1, record->size - start, tty);
@@ -769,6 +771,11 @@ main(int argc, char *argv[])
 
 		case 's':
 			opt_sort = false;
+			break;
+
+		case 'u':
+			opt_hi_start = "\x1b[4m";
+			opt_hi_end = "\x1b[24m";
 			break;
 
 		case '?':
