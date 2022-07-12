@@ -705,8 +705,10 @@ run_tui(void)
 			emit_one();
 
 		rl_forced_update_display();
-		rl_callback_read_char();
-
+		/* TODO: Maybe care about terminal resizing. */
+		do
+			rl_callback_read_char();
+		while (!strcmp(opt_query, rl_line_buffer));
 		snprintf(opt_query, sizeof opt_query, "%s", rl_line_buffer);
 	}
 }
