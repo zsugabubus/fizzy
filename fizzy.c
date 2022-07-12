@@ -812,6 +812,8 @@ main(int argc, char *argv[])
 	nb_matches = nb_total_records;
 	nb_records = nb_total_records;
 
+	fclose(input);
+
 	if (opt_auto_accept_only)
 		accept_only();
 
