@@ -594,6 +594,13 @@ fizzy_rl_handle_line(char *line)
 }
 
 static int
+fizzy_rl_exit(int count, int c)
+{
+	(void)c;
+	exit(count);
+}
+
+static int
 fizzy_rl_filter_reset(int count, int c)
 {
 	(void)count, (void)c;
@@ -666,13 +673,14 @@ run_tui(void)
 	rl_outstream = tty;
 
 	rl_bind_key('\t', rl_insert);
-	rl_add_defun("fizzy-filter-reset", fizzy_rl_filter_reset, -1);
-	rl_add_defun("fizzy-filter-matched", fizzy_rl_filter_matched, ' ');
-	rl_add_defun("fizzy-emit-one", fizzy_rl_emit_one, -1);
-	rl_add_defun("fizzy-emit-all", fizzy_rl_emit_all, -1);
+	rl_add_defun("fizzy-accept-all", fizzy_rl_accept_all, -1);
 	rl_add_defun("fizzy-accept-one", fizzy_rl_accept_one, -1);
 	rl_add_defun("fizzy-accept-only", fizzy_rl_accept_only, -1);
-	rl_add_defun("fizzy-accept-all", fizzy_rl_accept_all, -1);
+	rl_add_defun("fizzy-emit-all", fizzy_rl_emit_all, -1);
+	rl_add_defun("fizzy-emit-one", fizzy_rl_emit_one, -1);
+	rl_add_defun("fizzy-exit", fizzy_rl_exit, -1);
+	rl_add_defun("fizzy-filter-matched", fizzy_rl_filter_matched, ' ');
+	rl_add_defun("fizzy-filter-reset", fizzy_rl_filter_reset, -1);
 
 	/* Calls rl_initalize(). */
 	rl_callback_handler_install(opt_prompt, fizzy_rl_handle_line);

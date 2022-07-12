@@ -126,21 +126,9 @@ The following readline functions are registered:
 
 =over 4
 
-=item B<fizzy-filter-reset>
+=item B<fizzy-accept-all>
 
-Set filter to all records and clear line.
-
-=item B<fizzy-filter-matched>
-
-Set filter to matched records and clear line.
-
-=item B<fizzy-emit-one>
-
-Print (first) record to standard output.
-
-=item B<fizzy-emit-all>
-
-Similar to B<fizzy-emit-one> but for all records.
+Similar to B<fizzy-accept-one> but for all records.
 
 =item B<fizzy-accept-one>
 
@@ -151,9 +139,25 @@ exit with failure.
 
 Execute B<fizzy-accept-one> if only a single record is available.
 
-=item B<fizzy-accept-all>
+=item B<fizzy-emit-all>
 
-Similar to B<fizzy-accept-one> but for all records.
+Similar to B<fizzy-emit-one> but for all records.
+
+=item B<fizzy-emit-one>
+
+Print (first) record to standard output.
+
+=item B<fizzy-exit>
+
+Exit.
+
+=item B<fizzy-filter-matched>
+
+Set filter to matched records and clear line.
+
+=item B<fizzy-filter-reset>
+
+Set filter to all records and clear line.
 
 =back
 
