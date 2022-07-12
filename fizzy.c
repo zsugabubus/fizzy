@@ -689,6 +689,8 @@ run_tui(void)
 
 		score_all();
 		sort_all();
+		if (opt_print_changes)
+			emit_one();
 
 		if (nb_records == nb_total_records)
 			fprintf(tty, "[%"PRIu32"/%"PRIu32"] %s", nb_matches, nb_records, opt_header);
@@ -700,9 +702,6 @@ run_tui(void)
 		fputs("\x1b[H\x1b[m", tty);
 
 		fflush(tty);
-
-		if (opt_print_changes)
-			emit_one();
 
 		rl_forced_update_display();
 		/* TODO: Maybe care about terminal resizing. */
