@@ -6,7 +6,6 @@
 
 #include <readline/readline.h>
 
-#include <curses.h>
 #include <getopt.h>
 #include <inttypes.h>
 #include <limits.h>
