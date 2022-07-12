@@ -673,9 +673,12 @@ run_tui(void)
 	rl_add_defun("fizzy-accept-only", fizzy_rl_accept_only, -1);
 	rl_add_defun("fizzy-accept-all", fizzy_rl_accept_all, -1);
 
+	/* Calls rl_initalize(). */
 	rl_callback_handler_install(opt_prompt, fizzy_rl_handle_line);
+	/* Otherwise no prompt in $(...). */
+	rl_tty_set_echoing(1);
 
-	/* Disable scrolling. */
+	/* Disable wrapping. */
 	fputs("\x1b[?7l", tty);
 	/* Switch to alt screen. */
 	fputs("\x1b[?1049h", tty);
