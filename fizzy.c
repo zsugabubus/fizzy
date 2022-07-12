@@ -29,7 +29,6 @@ enum {
 	QUERY_SIZE_MAX = 32,
 };
 
-static char const *opt_rl_name = "Fizzy";
 static char const *opt_prompt = "> ";
 static char const *opt_header = "";
 static char const *opt_hi_start = "\x1b[7m";
@@ -594,43 +593,10 @@ fizzy_rl_handle_line(char *line)
 }
 
 static int
-fizzy_rl_exit(int count, int c)
-{
-	(void)c;
-	exit(count);
-}
-
-static int
-fizzy_rl_filter_reset(int count, int c)
+fizzy_rl_accept_all(int count, int c)
 {
 	(void)count, (void)c;
-	nb_records = nb_total_records;
-	rl_replace_line("", true);
-	return 1;
-}
-
-static int
-fizzy_rl_filter_matched(int count, int c)
-{
-	(void)count, (void)c;
-	nb_records = nb_matches;
-	rl_replace_line("", true);
-	return 1;
-}
-
-static int
-fizzy_rl_emit_one(int count, int c)
-{
-	(void)count, (void)c;
-	emit_one();
-	return 1;
-}
-
-static int
-fizzy_rl_emit_all(int count, int c)
-{
-	(void)count, (void)c;
-	emit_all();
+	accept_all();
 	return 1;
 }
 
@@ -651,78 +617,44 @@ fizzy_rl_accept_only(int count, int c)
 }
 
 static int
-fizzy_rl_accept_all(int count, int c)
+fizzy_rl_emit_all(int count, int c)
 {
 	(void)count, (void)c;
-	accept_all();
+	emit_all();
 	return 1;
 }
 
-static void
-run_tui(void)
+static int
+fizzy_rl_emit_one(int count, int c)
 {
-	tty = fopen(ctermid(NULL), "w+");
-	if (!tty) {
-		perror("Cannot open terminal");
-		exit(EXIT_FAILURE);
-	}
-	setvbuf(tty, NULL, _IOFBF, BUFSIZ);
+	(void)count, (void)c;
+	emit_one();
+	return 1;
+}
 
-	rl_readline_name = opt_rl_name;
-	rl_instream = tty;
-	rl_outstream = tty;
+static int
+fizzy_rl_exit(int count, int c)
+{
+	(void)c;
+	exit(count);
+}
 
-	rl_bind_key('\t', rl_insert);
-	rl_add_defun("fizzy-accept-all", fizzy_rl_accept_all, -1);
-	rl_add_defun("fizzy-accept-one", fizzy_rl_accept_one, -1);
-	rl_add_defun("fizzy-accept-only", fizzy_rl_accept_only, -1);
-	rl_add_defun("fizzy-emit-all", fizzy_rl_emit_all, -1);
-	rl_add_defun("fizzy-emit-one", fizzy_rl_emit_one, -1);
-	rl_add_defun("fizzy-exit", fizzy_rl_exit, -1);
-	rl_add_defun("fizzy-filter-matched", fizzy_rl_filter_matched, ' ');
-	rl_add_defun("fizzy-filter-reset", fizzy_rl_filter_reset, -1);
+static int
+fizzy_rl_filter_matched(int count, int c)
+{
+	(void)count, (void)c;
+	nb_records = nb_matches;
+	rl_replace_line("", true);
+	return 1;
+}
 
-	/* Calls rl_initalize(). */
-	rl_callback_handler_install(opt_prompt, fizzy_rl_handle_line);
-	/* Otherwise no prompt in $(...). */
-	rl_tty_set_echoing(1);
-
-	/* Disable wrapping. */
-	fputs("\x1b[?7l", tty);
-	/* Switch to alt screen. */
-	fputs("\x1b[?1049h", tty);
-
-	rl_insert_text(opt_query);
-	rl_resize_terminal();
-
-	for (;;) {
-		fputs("\x1b[H\x1b[2J\n\x1b[m", tty);
-		int rows, cols;
-		rl_get_screen_size(&rows, &cols);
-
-		score_all();
-		sort_all();
-		if (opt_print_changes)
-			emit_one();
-
-		if (nb_records == nb_total_records)
-			fprintf(tty, "[%"PRIu32"/%"PRIu32"] %s", nb_matches, nb_records, opt_header);
-		else
-			fprintf(tty, "[%"PRIu32"/%"PRIu32" (%"PRIu32")] %s", nb_matches, nb_records, nb_total_records, opt_header);
-
-		print_records(rows - 2);
-
-		fputs("\x1b[H\x1b[m", tty);
-
-		fflush(tty);
-
-		rl_forced_update_display();
-		/* TODO: Maybe care about terminal resizing. */
-		do
-			rl_callback_read_char();
-		while (!strcmp(opt_query, rl_line_buffer));
-		snprintf(opt_query, sizeof opt_query, "%s", rl_line_buffer);
-	}
+static int
+fizzy_rl_filter_reset(int count, int c)
+{
+	(void)count, (void)c;
+	nb_records = nb_total_records;
+	rl_replace_line("", true);
+	return 1;
 }
 
 int
@@ -767,10 +699,6 @@ main(int argc, char *argv[])
 			omp_set_num_threads(atoi(optarg));
 			break;
 #endif
-
-		case 'n':
-			opt_rl_name = optarg;
-			break;
 
 		case 'p':
 			opt_prompt = optarg;
@@ -828,11 +756,72 @@ main(int argc, char *argv[])
 	return 0;
 #endif
 
-	if (opt_interactive) {
-		run_tui();
-	} else {
+	if (!opt_interactive) {
 		score_all();
 		sort_all();
 		accept_all();
+	}
+
+	tty = fopen(ctermid(NULL), "w+");
+	if (!tty) {
+		perror("Cannot open terminal");
+		exit(EXIT_FAILURE);
+	}
+	setvbuf(tty, NULL, _IOFBF, BUFSIZ);
+
+	rl_readline_name = argv[0];
+	rl_instream = tty;
+	rl_outstream = tty;
+
+	rl_bind_key('\t', rl_insert);
+	rl_add_defun("fizzy-accept-all", fizzy_rl_accept_all, -1);
+	rl_add_defun("fizzy-accept-one", fizzy_rl_accept_one, -1);
+	rl_add_defun("fizzy-accept-only", fizzy_rl_accept_only, -1);
+	rl_add_defun("fizzy-emit-all", fizzy_rl_emit_all, -1);
+	rl_add_defun("fizzy-emit-one", fizzy_rl_emit_one, -1);
+	rl_add_defun("fizzy-exit", fizzy_rl_exit, -1);
+	rl_add_defun("fizzy-filter-matched", fizzy_rl_filter_matched, ' ');
+	rl_add_defun("fizzy-filter-reset", fizzy_rl_filter_reset, -1);
+
+	/* Calls rl_initalize(). */
+	rl_callback_handler_install(opt_prompt, fizzy_rl_handle_line);
+	/* Otherwise no prompt in $(...). */
+	rl_tty_set_echoing(1);
+
+	/* Disable wrapping. */
+	fputs("\x1b[?7l", tty);
+	/* Switch to alt screen. */
+	fputs("\x1b[?1049h", tty);
+
+	rl_insert_text(opt_query);
+	rl_resize_terminal();
+
+	for (;;) {
+		fputs("\x1b[H\x1b[2J\n\x1b[m", tty);
+		int rows, cols;
+		rl_get_screen_size(&rows, &cols);
+
+		score_all();
+		sort_all();
+		if (opt_print_changes)
+			emit_one();
+
+		if (nb_records == nb_total_records)
+			fprintf(tty, "[%"PRIu32"/%"PRIu32"] %s", nb_matches, nb_records, opt_header);
+		else
+			fprintf(tty, "[%"PRIu32"/%"PRIu32" (%"PRIu32")] %s", nb_matches, nb_records, nb_total_records, opt_header);
+
+		print_records(rows - 2);
+
+		fputs("\x1b[H\x1b[m", tty);
+
+		fflush(tty);
+
+		rl_forced_update_display();
+		/* TODO: Maybe care about terminal resizing. */
+		do
+			rl_callback_read_char();
+		while (!strcmp(opt_query, rl_line_buffer));
+		snprintf(opt_query, sizeof opt_query, "%s", rl_line_buffer);
 	}
 }

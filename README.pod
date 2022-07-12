@@ -76,18 +76,6 @@ Print 0-based indices instead of echoing back input records.
 Same as setting environment variable B<OMP_NUM_THREADS>, except it will
 complain if OpenMP support was disabled at compile.
 
-=item -n
-
-Set readline application name. Default: B<Fizzy>.
-
-Example:
-
-	fizzy -n MyFizzy
-	...
-	$if MyFizzy
-	# ...
-	$endif
-
 =item -p
 
 Set readline prompt. Default: B<< "> " >>.
@@ -169,7 +157,7 @@ Open a file
 
 Set custom bindings in .inputrc
 
-	$if Fizzy # Refer to -n to change name.
+	$if Fizzy # `ARGV0=MyFizzy fizzy` to change name.
 	+: fizzy-emit-one
 	$endif
 
