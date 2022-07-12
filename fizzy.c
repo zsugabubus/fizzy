@@ -588,7 +588,8 @@ accept_all(void)
 static void
 fizzy_rl_handle_line(char *line)
 {
-	(void)line;
+	if (!line)
+		exit(EXIT_FAILURE);
 	accept_one();
 }
 
