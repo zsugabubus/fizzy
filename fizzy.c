@@ -831,6 +831,6 @@ main(int argc, char *argv[])
 	} else {
 		score_all();
 		sort_all();
-		emit_all();
+		accept_all();
 	}
 }
