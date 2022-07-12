@@ -246,9 +246,6 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 		return;
 	}
 
-	__builtin_prefetch(record->bytes, 1, 1);
-	__builtin_prefetch(str, 1, 1);
-
 	/*
 	 *  subject string
 	 * Q j i -> n
@@ -270,7 +267,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 	uint32_t k = 1;
 	uint32_t penalty = 0;
 
-	uint32_t prev_bonus;
+	uint32_t prev_bonus = 0;
 	enum char_class prev_cc = CC_FIELD_BREAK;
 
 	for (uint32_t i = 0; i < n; ++i) {
@@ -290,9 +287,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 		uint64_t prev_matched = matched;
 		matched = 0;
 
-		if (!(BITSET_TEST(in_query, c) ||
-		      BITSET_TEST(in_query, c2)))
-		{
+		if (!BITSET_TEST(in_query, c)) {
 			/* prev_bonus do not have to be reset because
 			 * prev_matched zeroed. */
 			continue;
@@ -321,17 +316,19 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 			/* Prefer match of the same kind. A distant continuation. */
 			if (max_bonuses[j] == bonus)
 				score += bonus;
-			/* Bonus for continuous match. */
-			if (0 < j && (prev_matched & (1 << (j - 1)))) {
-				/* ...xfGh... */
-				/* Copy cont bonus. */
-				if (bonus < prev_bonus)
-					bonus = prev_bonus;
-				score += bonus;
-			}
 
-			if (j + 1 == k)
-				++k;
+			/* Bonus for continuous match. */
+			uint32_t match_bonus = bonus;
+			/* We may have a continuous sequence over a letter
+			 * which has a higher bonus. Use that.
+			 * ...xfGh... */
+			if (match_bonus < prev_bonus)
+				match_bonus = prev_bonus;
+			if (!((prev_matched << 1 /* j is off by one */) & (1 << j)))
+				match_bonus = 0;
+			score += match_bonus;
+
+			k += (j + 1 == k);
 
 			matched |= 1 << j;
 
