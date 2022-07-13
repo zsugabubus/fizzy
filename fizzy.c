@@ -126,7 +126,7 @@ static uint8_t const CLASSIFY[] = {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Woverride-init"
 static uint8_t const BONUS[CC_NB][CC_NB] = {
-	/* [previous] { [current] = bonus }. */
+	/* [previous] { [current] = bonus } */
 	[CC_NONE] = {
 		CC_ALL(1),
 		[CC_UPPER] = 5,
@@ -156,7 +156,8 @@ static uint8_t const BONUS[CC_NB][CC_NB] = {
 	},
 	[CC_UPPER] = {
 		CC_ALL(1),
-		[CC_UPPER] = 15, /* SCREAMINGCase */
+		/* SCREAMINGCase */
+		[CC_UPPER] = 15,
 	},
 };
 #pragma GCC diagnostic pop
@@ -450,7 +451,7 @@ score_all(void)
 }
 
 static int
-compare_record(void const *px, void const *py)
+compare_records(void const *px, void const *py)
 {
 	struct record const *x = *(struct record **)px;
 	struct record const *y = *(struct record **)py;
@@ -478,7 +479,7 @@ sort_all(void)
 {
 	if (!opt_sort)
 		return;
-	qsort(records, nb_matches, sizeof *records, compare_record);
+	qsort(records, nb_matches, sizeof *records, compare_records);
 }
 
 static char const *
@@ -517,12 +518,12 @@ read_records(FILE *stream)
 }
 
 static void
-print_records(int nlines)
+print_records(int nb_lines)
 {
-	if (nlines < 0)
+	if (nb_lines < 0)
 		return;
 
-	for (uint32_t i = 0; i < nb_matches && i < (uint32_t)nlines; ++i) {
+	for (uint32_t i = 0; i < nb_matches && i < (uint32_t)nb_lines; ++i) {
 		fputs("\n\x1b[m", tty);
 
 		struct record *record = records[i];
