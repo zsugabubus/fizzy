@@ -2,13 +2,16 @@
 test -x ./fizzy
 PATH=.:$PATH
 
-T() {
+TStable() {
 	stdin=$(cat)
 
-	echo "T $@"
+	echo "T $@" | tee cmdline
+
+	printf %s "$stdin" >input
 
 	printf %s "$stdin" |
-	fizzy -f "$@" >got
+	OMP_NUM_THREADS=1 fizzy -f "$@" >got ||
+	return 1
 
 	printf %s "$stdin" |
 	grep '^[0-9]' |
@@ -17,6 +20,14 @@ T() {
 	diff -yB expected got
 }
 
+T() {
+	stdin2=$(cat)
+	printf %s "$stdin2" | TStable "$@"
+	printf '%s\n' "$stdin2" | tac | TStable "$@"
+}
+
+esc=$(printf '\x1b')
+
 # T works fine.
 ! printf -- '-\tT works fine' | T
 printf '0\tT works fine' | T
@@ -24,13 +35,17 @@ printf '0\tT works fine' | T
 # Record separator appended to output.
 test "$(echo a)" = "$(printf a | fizzy -1)"
 
-# Sanity checks.
+# Not fails.
 printf '0\taaa' | T
+# Empty fails.
+! printf '' | T
+
+# `find` works.
+fizzy -f -qfizzy
 
 T -qx <<"EOF"
-1	xxxxx
--	y
-0	xxxxxxxxxx
+0	xxxxx
+1	xxxxxxxxxx
 EOF
 
 T -qabcd <<"EOF"
@@ -75,34 +90,114 @@ T -qabac <<"EOF"
 EOF
 
 T -qabc <<"EOF"
-0	AxxxxxBcxCxxx
-1	AxxxxxBcxxxCxxx
-2	AxxxxxBcxxx
+0	AxxxxxBcxxx
+1	AxxxxxBcxCxxx
+2	AxxxxxBcxxxCxxx
 EOF
 
 T -qabc <<"EOF"
 0	axx/xxxxxxxxxb/ABCxxxx.xxx
-1	xxxxx/xxxx.abc
-2	axx/xxxxa/xxx/xxx-bxx-xxxxxxxx-xxcxxxx
+1	axx/xxxxa/xxx/xxx-bxx-xxxxxxxx-xxcxxxx
+2	xxxxx/xxxx.abc
 EOF
-
-T -qaba <<"EOF"
-0	xxxxxxxxxxxx/AxxxBxxxxxAxxxx
-1	axxxb/xxx/axxx
-EOF
-
-T -qaba <<"EOF"
-0	xxxxxxxxxxxx/AxxxBxxxxxAxxxx
-1	axxxb/xxx/axxx
-EOF
-
-# Length does not count.
 T -qabc <<"EOF"
-0	AbcxxxXxxx.y
-1	Abcxxx.y
+0	axx/xxxxxxxxxb/ABCxxxx.xxx
+1	xxxxx/xxxx.abc
+2	xax/xxxxa/xxx/xxx-bxx-xxxxxxxx-xxcxxxx
 EOF
-# ...but more compact match wins.
-T -qabcy <<"EOF"
-0	Abcxxx.y
-1	AbcxxxXxxx.y
+#  ^-- Not at high bonus position.
+
+T -qaba <<"EOF"
+0	xxxxxxxxxxxx/AxxxBxxxxxAxxxx
+1	axxxb/xxx/axxx
 EOF
+
+T -qaba <<"EOF"
+0	xxxxxxxxxxxx/AxxxBxxxxxAxxxx
+1	axxxb/xxx/axxx
+EOF
+
+! T -qm <<EOF
+-	$esc[xxxm
+EOF
+! T -qa <<EOF
+-	$esc[axxm
+EOF
+
+T -qab <<EOF
+0	xa$esc[xxxxxxxxxxmbx
+1	xaxxxxxxxxxxbx
+EOF
+
+T -qa <<"EOF"
+0	xxx	a	xxx
+1	xxaxx/axx/Axx
+EOF
+
+T -qab <<"EOF"
+0	xx	ax	bx	x
+1	xx	ab	xx	xx
+EOF
+
+# T -qabca <<"EOF"
+# 0	./xxx/xxxxxxxxbx/AxbxBxxxxCxbxAxbxxxx.bxx
+# 1	./xxaxxxxaxxxx/@bxxbxxx-xxxxxxx/axx/bxxxx/cxxb-xxx.a.bx
+# EOF
+
+T -qabc <<"EOF"
+0	/axxxx/bcxxdXx
+1	/abcDx
+EOF
+T -qabcd <<"EOF"
+0	/abcDx
+1	/axxxx/bcxxdXx
+EOF
+
+# Prefer shorter.
+T -qa <<"EOF"
+0	xaxb
+2	xaxxxb
+1	xaxxb
+3	xaxxxxb
+EOF
+T -qab <<"EOF"
+0	xaxb
+2	xaxxxb
+1	xaxxb
+3	xaxxxxb
+EOF
+# Prefer less gap.
+T -qab <<"EOF"
+0	.axbxxx
+2	.axxxbx
+1	.axxbxx
+3	.axxxxb
+EOF
+
+T -qab <<"EOF"
+0	abxxd
+1	abxxbd
+EOF
+# XXX: Maybe unwanted: abd(max)+bd(cont)
+T -qabd <<"EOF"
+0	abxxbd
+1	abxxd
+EOF
+
+# T -qabc <<"EOF"
+# 1	A	B	C	D
+# 0	abcd
+# EOF
+# T -qabcd <<"EOF"
+# 1	abcd
+# 0	A	B	C	D
+# EOF
+
+# T -qabc <<"EOF"
+# 1	A	B	C	D
+# 0	xxx	abcd	xxx
+# EOF
+# T -qabcd <<"EOF"
+# 1	xxx	abcd	xxx
+# 0	A	B	C	D
+# EOF

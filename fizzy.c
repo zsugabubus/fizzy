@@ -25,84 +25,40 @@
 #define IF1_0_(x)
 #define IF1_1_(x) x
 
+#define REPEAT1(i) xmacro(i)
+#define REPEAT2(i) REPEAT1(i) REPEAT1(1 + i)
+#define REPEAT4(i) REPEAT2(i) REPEAT2(2 + i)
+#define REPEAT8(i) REPEAT4(i) REPEAT4(4 + i)
+#define REPEAT16(i) REPEAT8(i) REPEAT8(8 + i)
+#define REPEAT32(i) REPEAT16(i) REPEAT16(16 + i)
+#define REPEAT64(i) REPEAT32(i) REPEAT32(32 + i)
+#define REPEAT128(i) REPEAT64(i) REPEAT64(64 + i)
+#define REPEAT256(i) REPEAT128(i) REPEAT128(128 + i)
+
+#define COMPARE(a, b) (((a) > (b)) - ((a) < (b)))
+
+#define BITSET_SIZE(n) (((n) + (CHAR_BIT - 1)) / CHAR_BIT)
+#define BITSET_OP(x, op, bit, i) (((x)[(i) / CHAR_BIT]) op ((bit) << ((i) % CHAR_BIT)))
+#define BITSET_SET_IF(x, i, cond) BITSET_OP(x, |=, !!(cond), i)
+#define BITSET_TEST(x, i) BITSET_OP(x, &, 1, i)
+
+#if 0
+# define dbgf(...) fprintf(__VA_ARGS__)
+#else
+# define dbgf(...)
+#endif
+
 enum {
-	QUERY_SIZE_MAX = 32,
+	QUERY_SIZE = 32,
 };
-
-static char const *opt_prompt = "> ";
-static char const *opt_header = "";
-static char const *opt_hi_start = "\x1b[7m";
-static char const *opt_hi_end = "\x1b[27m";
-static char opt_query[QUERY_SIZE_MAX + 1 /* NUL */];
-static char opt_delim = '\n';
-static bool opt_interactive = true;
-static bool opt_sort = true;
-static bool opt_prefix_alpha = false;
-static bool opt_print_changes = false;
-static bool opt_print_indices = false;
-static bool opt_auto_accept_only = false;
-
-static FILE *tty;
 
 struct record {
 	uint32_t score;
+	uint32_t trail;
 	uint32_t index;
 	uint32_t size;
 	uint8_t bytes[];
 };
-
-static uint32_t nb_total_records, nb_records, nb_matches;
-static struct record **records;
-
-#define BITSET_SIZE(n) (((n) + (CHAR_BIT - 1)) / CHAR_BIT)
-#define BITSET_OP_(x, op, bit, i) (((x)[(i) / CHAR_BIT]) op ((bit) << ((i) % CHAR_BIT)))
-#define BITSET_SET_IF(x, i, cond) BITSET_OP_(x, |=, !!(cond), i)
-#define BITSET_SET(x, i) BITSET_SET_IF(x, i, 1)
-#define BITSET_TEST(x, i) BITSET_OP_(x, &, 1, i)
-
-static void
-add_record(char const *pre, size_t presz, char const *buf, size_t bufsz)
-{
-	uint32_t sz = presz + bufsz;
-	uint32_t allocsz = offsetof(struct record, bytes[BITSET_SIZE(sz) + sz]);
-	struct record *record = malloc(allocsz);
-	if (!record)
-		abort();
-
-	record->index = nb_total_records;
-	record->size = sz;
-	memset(record->bytes, 0, BITSET_SIZE(sz));
-	uint8_t *str = record->bytes + BITSET_SIZE(sz);
-	memcpy(str, pre, presz);
-	memcpy(record->bytes + BITSET_SIZE(sz) + presz, buf, bufsz);
-
-	bool escape = false;
-	for (uint32_t i = 0; i < sz; ++i) {
-		uint8_t c = str[i];
-
-		escape |= ('[' - '@') == c;
-
-		bool control = c < ' ';
-		bool ignore = control || escape;
-		BITSET_SET_IF(record->bytes, i, ignore);
-
-		if ('\r' == c)
-			for (uint32_t j = 0; j < i; ++j)
-				BITSET_SET(record->bytes, j);
-
-		/* End of SGR sequence. */
-		escape &= 'm' != c;
-	}
-
-	/* Allocate 2^x sizes. */
-	if (!(nb_total_records & (nb_total_records - 1))) {
-		uint32_t nb_next = 2 * nb_total_records + !nb_total_records;
-		records = realloc(records, nb_next * sizeof *records);
-		if (!records)
-			abort();
-	}
-	records[nb_total_records++] = record;
-}
 
 enum char_class {
 	CC_NONE,
@@ -115,15 +71,26 @@ enum char_class {
 	CC_NB,
 };
 
-#define REPEAT1(i) xmacro(i)
-#define REPEAT2(i) REPEAT1(i) REPEAT1(1 + i)
-#define REPEAT4(i) REPEAT2(i) REPEAT2(2 + i)
-#define REPEAT8(i) REPEAT4(i) REPEAT4(4 + i)
-#define REPEAT16(i) REPEAT8(i) REPEAT8(8 + i)
-#define REPEAT32(i) REPEAT16(i) REPEAT16(16 + i)
-#define REPEAT64(i) REPEAT32(i) REPEAT32(32 + i)
-#define REPEAT128(i) REPEAT64(i) REPEAT64(64 + i)
-#define REPEAT256(i) REPEAT128(i) REPEAT128(128 + i)
+static char const *opt_prompt = "> ";
+static char const *opt_header = "";
+static char const *opt_hi_start = "\x1b[7m";
+static char const *opt_hi_end = "\x1b[27m";
+static char opt_query[QUERY_SIZE + 1 /* NUL */];
+static char opt_delim = '\n';
+static bool opt_interactive = true;
+static bool opt_sort = true;
+static bool opt_prefix_alpha = false;
+static bool opt_print_changes = false;
+static bool opt_print_indices = false;
+static bool opt_auto_accept_only = false;
+
+static FILE *tty;
+
+static uint32_t nb_total_records, nb_records, nb_matches;
+static struct record **records;
+/* [c]= (1 << i0) | ... <=> q[i0] matches (==) c */
+static uint32_t qmat[UINT8_MAX + 1];
+static char cur_query[sizeof opt_query];
 
 static uint8_t const CLASSIFY[] = {
 #define xmacro(c) \
@@ -195,19 +162,57 @@ static uint8_t const BONUS[CC_NB][CC_NB] = {
 #pragma GCC diagnostic pop
 
 static void
+add_record(char const *pre, size_t presz, char const *buf, size_t bufsz)
+{
+	uint32_t sz = presz + bufsz;
+	uint32_t allocsz = offsetof(struct record, bytes[BITSET_SIZE(sz) + sz]);
+	struct record *record = malloc(allocsz);
+	if (!record)
+		abort();
+
+	record->index = nb_total_records;
+	record->size = sz;
+	memset(record->bytes, 0, BITSET_SIZE(sz));
+	uint8_t *str = record->bytes + BITSET_SIZE(sz);
+	memcpy(str, pre, presz);
+	memcpy(record->bytes + BITSET_SIZE(sz) + presz, buf, bufsz);
+
+	bool escape = false;
+	for (uint32_t i = 0; i < sz; ++i) {
+		uint8_t c = str[i];
+
+		escape |= ('[' - '@') == c;
+
+		bool control = c < ' ' && !CLASSIFY[c];
+		bool ignore = control || escape;
+		BITSET_SET_IF(record->bytes, i, ignore);
+
+		/* End of SGR sequence. */
+		escape &= 'm' != c;
+	}
+
+	/* Allocate 2^x sizes. */
+	if (!(nb_total_records & (nb_total_records - 1))) {
+		uint32_t nb_next = 2 * nb_total_records + !nb_total_records;
+		records = realloc(records, nb_next * sizeof *records);
+		if (!records)
+			abort();
+	}
+	records[nb_total_records++] = record;
+}
+
+static void
 score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 {
 	record->score = 0;
+	record->trail = 0;
 
 	uint32_t out_position = 0;
 	if (nb_positions)
 		positions[0] = UINT32_MAX;
 
 	uint32_t n = record->size;
-	uint8_t const *const str = record->bytes + BITSET_SIZE(record->size);
-
-	uint8_t in_query[BITSET_SIZE(UINT8_MAX + 1)];
-	memset(in_query, 0, sizeof in_query);
+	uint8_t const *str = record->bytes + BITSET_SIZE(record->size);
 
 	uint32_t m = 0;
 	for (uint8_t const *q = (uint8_t *)opt_query,
@@ -216,10 +221,6 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 	     *q;
 	     ++q, ++m)
 	{
-		BITSET_SET(in_query, *q);
-		if ('a' <= *q && *q <= 'z')
-			BITSET_SET(in_query, *q - 'a' + 'A');
-
 		for (uint32_t i;;) {
 			uint8_t const *p = memchr(ptr, *q, end - ptr);
 
@@ -229,9 +230,8 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 					ptr = p;
 			} else
 				ptr = p;
-			if (!ptr) {
+			if (!ptr)
 				return;
-			}
 
 			i = ptr - str;
 			++ptr;
@@ -242,7 +242,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 	}
 
 	if (!m) {
-		record->score = 1;
+		record->score = UINT32_MAX;
 		return;
 	}
 
@@ -255,111 +255,140 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 	 * Y m
 	 */
 
-	uint32_t max_paths[QUERY_SIZE_MAX - 1][QUERY_SIZE_MAX];
-	uint32_t max_scores[QUERY_SIZE_MAX + 1];
-	uint32_t max_bonuses[QUERY_SIZE_MAX + 1];
-	uint64_t matched = 0;
+	/* [i][i]=Matching position of the maximum for query[i].
+	 * [i][j<i]=Path to [i][i]. */
+	uint32_t max_paths[QUERY_SIZE - 1][QUERY_SIZE];
+	/* [i]=Best score for the i-long prefix. Off by one so we need one more
+	 * element.
+	 *
+	 * These scores fade away in the distance, i.e. there is penalty if
+	 * next match occurs (far) after where previous byte reached its maximum.
+	 * Gap penalty is always 1 and bonuses are configured based on this.
+	 *
+	 * To avoid decrementing max_scores[..] on every output byte, max_score
+	 * is transformed using output index. */
+	uint32_t max_scores[QUERY_SIZE + 1];
+	/* Bonus for the maximum. */
+	uint32_t max_bonuses[QUERY_SIZE + 1];
+	/* Bonus for continuation. */
+	uint32_t cont_bonuses[QUERY_SIZE + 1];
 
 	memset(max_scores, 0, sizeof max_scores);
 	memset(max_bonuses, 0, sizeof max_bonuses);
+	memset(cont_bonuses, 0, sizeof cont_bonuses);
 
-	uint32_t max_score = 0;
-	uint32_t k = 1;
-	uint32_t penalty = 0;
-
-	uint32_t prev_bonus = 0;
 	enum char_class prev_cc = CC_FIELD_BREAK;
+	uint32_t prev_mat = 0;
+	uint32_t max_score = 0;
+	uint32_t max_pos = 0;
+	/* Starts at 0 so first query byte must be matched before others. After
+	 * then it is incremented step-by-step so a next byte can only be
+	 * matched when everything before it has already been matched once. */
+	uint32_t k = 0;
+	/* Output byte index. */
+	uint32_t o = 0;
+
+	dbgf(stderr, "%.*s\n", n, str);
 
 	for (uint32_t i = 0; i < n; ++i) {
 		if (BITSET_TEST(record->bytes, i))
 			continue;
 
+		++o;
+
 		uint8_t c = str[i];
 		enum char_class cc = CLASSIFY[c];
-		uint32_t bonus = BONUS[prev_cc][cc];
-		prev_cc = cc;
 
-		/* Speed of light squared. */
-		uint8_t c2 = 'A' <= c && c <= 'Z' ? c - 'A' + 'a' : c;
-
-		++penalty;
-
-		uint64_t prev_matched = matched;
-		matched = 0;
-
-		if (!BITSET_TEST(in_query, c)) {
-			/* prev_bonus do not have to be reset because
-			 * prev_matched zeroed. */
+		uint32_t mat = qmat[c] & ((2 << k) - 1);
+		if (!mat) {
+			prev_mat = 0;
+			prev_cc = cc;
 			continue;
 		}
 
-		/* Scores fade away in the distance. Gap penalty is always 1. */
-		for (uint32_t j = 1; j < k; ++j)
-			max_scores[j] = penalty < max_scores[j]
-				? max_scores[j] - penalty
-				: 0;
-		penalty = 0;
+		uint32_t cont_mat = prev_mat;
+		prev_mat = mat;
 
-		/* Go backwards so we will see the previous state of an upper
+		uint32_t bonus = BONUS[prev_cc][cc];
+		prev_cc = cc;
+
+		k += (mat & (1 << k)) && k + 1 < m;
+
+		/* Go backwards so we can see the previous state of an upper
 		 * cell. */
-		for (uint32_t j = k; j > 0;) {
-			uint8_t q = opt_query[--j];
+		for (uint32_t j;
+		     mat && (j = 31 ^ __builtin_clz(mat), 1);
+		     mat ^= 1 << j)
+		{
+			uint32_t score;
 
-			if (!(q == c || q == c2))
-				continue;
+			score = o < max_scores[j]
+				? max_scores[j] - o
+				: 0;
 
-			uint32_t score = 0;
-			/* Best score up to the prefix string. */
-			score += max_scores[j];
-			/* Bonus for matching this particular position. */
-			score += bonus;
-			/* Prefer match of the same kind. A distant continuation. */
-			if (max_bonuses[j] == bonus)
+			/* Prefer match of the same kind. A kind of distant
+			 * continuation. */
+			if (score /* Not too far. */ && bonus == max_bonuses[j])
 				score += bonus;
 
-			/* Bonus for continuous match. */
-			uint32_t match_bonus = bonus;
-			/* We may have a continuous sequence over a letter
-			 * which has a higher bonus. Use that.
-			 * ...xfGh... */
-			if (match_bonus < prev_bonus)
-				match_bonus = prev_bonus;
-			if (!((prev_matched << 1 /* j is off by one */) & (1 << j)))
-				match_bonus = 0;
-			score += match_bonus;
+			/* Bonus for matching this particular position. */
+			score += bonus;
 
-			k += (j + 1 == k);
+			/* Bonus for contiguous match. Take the better since
+			 * we may have a continuation over a position that has
+			 * a higher bonus (xaBcx). */
+			uint32_t cont_bonus = cont_bonuses[j];
+			if (cont_bonus < bonus)
+				cont_bonus = bonus;
+			/* Increase bonus so longer wins. */
+			cont_bonus += 1;
+			cont_bonuses[j + 1] = cont_bonus;
+			if (!((cont_mat << 1) & (1 << j)))
+				cont_bonus = 0;
+			score += cont_bonus;
 
-			matched |= 1 << j;
+			dbgf(stderr, "%*.s%c:%*.sj=%2d/%-2d m=%-4u b=%-4u cm=%-4u cb=%-4u => %-4u %s\n",
+					i, "", c,
+					80 - i, "",
+					j, k,
+					max_scores[j],
+					bonus,
+					max_bonuses[j] == bonus ? max_bonuses[j] : 0,
+					cont_bonus,
+					score,
+					o + score <= max_scores[j + 1] ? "" : "MAX");
 
-			if (score <= max_scores[j + 1])
+			if (o + score <= max_scores[j + 1])
 				continue;
-			max_scores[j + 1] = score;
+			max_scores[j + 1] = o + score;
 			max_bonuses[j + 1] = bonus;
 
 			if (j + 1 < m) {
 				/* Only the first `j * sizeof(uint32_t)` bytes
 				 * are needed but it's faster with known size. */
 				if (0 < j)
-					memcpy(max_paths[j], max_paths[j - 1], sizeof *max_paths);
+					memcpy(max_paths[j], max_paths[j - 1],
+							sizeof *max_paths);
 				max_paths[j][j] = i;
 				continue;
 			}
+			/* Matched the whole query. */
 
-			/* Give higher score to next occurrances. */
-			max_scores[0] += 1;
 			max_score = score;
+			max_pos = i;
+			dbgf(stderr, "new_max=%u\n", max_score);
 
 			if (!nb_positions)
 				continue;
 
-			/* Ensure we have enough space.
-			 *
-			 * It is absolutely possible that it will overwrite
-			 * previous positions but only the match with the
-			 * highest score is really interesting. */
-			if (nb_positions - j < out_position)
-				out_position = nb_positions - j;
+			/* Reserve space for highest quality match. */
+			uint32_t tmp = nb_positions - (
+					j + /* Previous values. */
+					/*1 +*/ /* This one. */
+					1 /* End marker. */
+			);
+			if (tmp < out_position)
+				out_position = tmp;
 
 			/* Append new positions. Old ones are already included
 			 * in positions list because i is strict monotonic
@@ -376,26 +405,30 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 			positions[out_position] = i;
 			out_position += 1;
 		}
-
-		prev_bonus = bonus;
 	}
+
+	dbgf(stderr, " ==> %u\n\n", max_score);
 
 	if (nb_positions)
 		positions[out_position] = UINT32_MAX;
 
 	record->score = max_score;
+	record->trail = n - max_pos;
 }
 
 static void
 score_all(void)
 {
-	static char cur_query[QUERY_SIZE_MAX + 1 /* NUL */];
-
 	bool subquery = strstr(opt_query, cur_query);
-
 	uint32_t n = subquery ? nb_matches : nb_records;
-
 	memcpy(cur_query, opt_query, sizeof cur_query);
+
+	memset(qmat, 0, sizeof qmat);
+	for (uint8_t m = 0, c; (c = opt_query[m]); ++m) {
+		qmat[c] |= 1 << m;
+		if ('a' <= c && c <= 'z')
+			qmat[c - 'a' + 'A'] |= 1 << m;
+	}
 
 #pragma omp parallel for schedule(dynamic)
 	for (uint32_t i = 0; i < n; ++i) {
@@ -416,28 +449,28 @@ score_all(void)
 	}
 }
 
-#define COMPARE(a, b) (((a) > (b)) - ((a) < (b)))
-
 static int
-compare_index(void const *px, void const *py)
+compare_record(void const *px, void const *py)
 {
 	struct record const *x = *(struct record **)px;
 	struct record const *y = *(struct record **)py;
+	int cmp;
 
-	return COMPARE(x->index, y->index);
-}
-
-static int
-compare_score(void const *px, void const *py)
-{
-	struct record const *x = *(struct record **)px;
-	struct record const *y = *(struct record **)py;
-
-	int cmp = COMPARE(x->score, y->score);
+	cmp = COMPARE(x->score, y->score);
 	if (cmp)
 		return -cmp;
 
-	return compare_index(px, py);
+	cmp = COMPARE(x->trail, y->trail);
+	if (cmp)
+		return cmp;
+
+	cmp = COMPARE(x->size, y->size);
+	if (UINT32_MAX == x->score)
+		cmp = 0;
+	if (cmp)
+		return cmp;
+
+	return COMPARE(x->index, y->index);
 }
 
 static void
@@ -445,7 +478,7 @@ sort_all(void)
 {
 	if (!opt_sort)
 		return;
-	qsort(records, nb_matches, sizeof *records, compare_score);
+	qsort(records, nb_matches, sizeof *records, compare_record);
 }
 
 static char const *
@@ -493,12 +526,10 @@ print_records(int nlines)
 		fputs("\n\x1b[m", tty);
 
 		struct record *record = records[i];
-		uint32_t positions[4 * QUERY_SIZE_MAX + 1];
+		uint32_t positions[4 * QUERY_SIZE + 1];
 		score_record(record, positions, sizeof positions / sizeof *positions);
 
-#if 0
-		fprintf(tty, "(%5d) ", record->score);
-#endif
+		dbgf(tty, "(%5d) ", record->score);
 
 		uint8_t const *str = record->bytes + BITSET_SIZE(record->size);
 		uint32_t start = 0;
@@ -529,11 +560,12 @@ emit_record(struct record const *record)
 	else {
 		uint8_t const *str = record->bytes + BITSET_SIZE(record->size);
 		uint32_t size = record->size;
+		/* Cut prefix. */
 		if (opt_prefix_alpha) {
-			uint8_t const *sep = memchr(str, '\t', size);
-			sep += 1;
-			size -= sep - str;
-			str = sep;
+			uint8_t const *p = memchr(str, '\t', size);
+			p += 1;
+			size -= p - str;
+			str = p;
 		}
 		fwrite(str, 1, size, stdout);
 	}
