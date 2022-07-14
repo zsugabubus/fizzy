@@ -11,7 +11,7 @@ openmp_dep = dependency('openmp', required: get_option('openmp'))
 if not cc.has_function('__builtin_clz')
 	error()
 endif
-config.set10('HAVE_OMP', openmp_dep.found())
+config.set10('WITH_OMP', openmp_dep.found())
 
 fizzy = executable('fizzy',
 	'fizzy.c',

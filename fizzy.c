@@ -16,7 +16,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#if HAVE_OMP
+#if WITH_OMP
 # include <omp.h>
 #endif
 
@@ -693,7 +693,7 @@ fizzy_rl_filter_reset(int count, int c)
 int
 main(int argc, char *argv[])
 {
-	for (int opt; -1 != (opt = getopt(argc, argv, "01acfh:inp:q:su" IF1(HAVE_OMP, "j:")));)
+	for (int opt; -1 != (opt = getopt(argc, argv, "01acfh:inp:q:su" IF1(WITH_OMP, "j:")));)
 		switch (opt) {
 		case '0':
 			opt_delim = '\0';
@@ -727,7 +727,7 @@ main(int argc, char *argv[])
 			opt_print_indices = true;
 			break;
 
-#if HAVE_OMP
+#if WITH_OMP
 		case 'j':
 			omp_set_num_threads(atoi(optarg));
 			break;
