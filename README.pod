@@ -76,6 +76,11 @@ Print 0-based indices instead of echoing back input records.
 Same as setting environment variable B<OMP_NUM_THREADS>, except it will
 complain if OpenMP support was disabled at compile.
 
+=item -l LINES
+
+Show at most LINES records. Default is to use alternative screen and show as
+much records as possible.
+
 =item -p
 
 Set readline prompt. Default: B<< "> " >>.

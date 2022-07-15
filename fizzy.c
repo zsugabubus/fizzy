@@ -74,8 +74,8 @@ enum char_class {
 
 static char const *opt_prompt = "> ";
 static char const *opt_header = "";
-static char const *opt_hi_start = "\x1b[7m";
-static char const *opt_hi_end = "\x1b[27m";
+static char const *opt_hi_start = "\033[7m";
+static char const *opt_hi_end = "\033[27m";
 static char opt_query[QUERY_SIZE + 1 /* NUL */];
 static char opt_delim = '\n';
 static bool opt_interactive = true;
@@ -84,6 +84,7 @@ static bool opt_prefix_alpha = false;
 static bool opt_print_changes = false;
 static bool opt_print_indices = false;
 static bool opt_auto_accept_only = false;
+static int opt_lines = 0;
 
 static FILE *tty;
 
@@ -518,14 +519,16 @@ read_records(FILE *stream)
 	free(line);
 }
 
-static void
+static uint32_t
 print_records(int nb_lines)
 {
 	if (nb_lines < 0)
-		return;
+		return 0;
 
+	uint32_t count = 0;
 	for (uint32_t i = 0; i < nb_matches && i < (uint32_t)nb_lines; ++i) {
-		fputs("\n\x1b[m", tty);
+		fputs("\n\033[m", tty);
+		++count;
 
 		struct record *record = records[i];
 		uint32_t positions[4 * QUERY_SIZE + 1];
@@ -552,6 +555,8 @@ print_records(int nb_lines)
 
 		fwrite(str + start, 1, record->size - start, tty);
 	}
+
+	return count;
 }
 
 static void
@@ -705,16 +710,17 @@ handle_interrupt(int sig)
 }
 
 static void
-bye(void)
+reset_term(void)
 {
-	fputs("\x1b[?1049l", tty);
+	fputs("\033[?7h", tty);
+	fputs("\033[?1049l", tty);
 	fflush(tty);
 }
 
 int
 main(int argc, char *argv[])
 {
-	for (int opt; -1 != (opt = getopt(argc, argv, "01acfh:inp:q:su" IF1(WITH_OMP, "j:")));)
+	for (int opt; -1 != (opt = getopt(argc, argv, "01acfh:il:np:q:su" IF1(WITH_OMP, "j:")));)
 		switch (opt) {
 		case '0':
 			opt_delim = '\0';
@@ -754,6 +760,10 @@ main(int argc, char *argv[])
 			break;
 #endif
 
+		case 'l':
+			opt_lines = atoi(optarg);
+			break;
+
 		case 'p':
 			opt_prompt = optarg;
 			break;
@@ -767,8 +777,8 @@ main(int argc, char *argv[])
 			break;
 
 		case 'u':
-			opt_hi_start = "\x1b[4m";
-			opt_hi_end = "\x1b[24m";
+			opt_hi_start = "\033[4m";
+			opt_hi_end = "\033[24m";
 			break;
 
 		case '?':
@@ -837,26 +847,29 @@ main(int argc, char *argv[])
 	rl_add_defun("fizzy-filter-matched", fizzy_rl_filter_matched, ' ');
 	rl_add_defun("fizzy-filter-reset", fizzy_rl_filter_reset, -1);
 
-	/* Calls rl_initalize(). */
-	rl_callback_handler_install(opt_prompt, fizzy_rl_handle_line);
-
 	/* Disable wrapping. */
-	fputs("\x1b[?7l", tty);
-	/* Switch to alt screen. */
-	fputs("\x1b[?1049h", tty);
-	atexit(bye);
+	fputs("\033[?7l", tty);
+	if (!opt_lines)
+		/* Switch to alt screen. */
+		fputs("\033[?1049h", tty);
+	atexit(reset_term);
 
 	signal(SIGINT, handle_interrupt);
 	signal(SIGTERM, handle_interrupt);
 	signal(SIGQUIT, handle_interrupt);
 
+	rl_callback_handler_install(opt_prompt, fizzy_rl_handle_line);
 	rl_insert_text(opt_query);
 	rl_resize_terminal();
 
 	for (;;) {
-		fputs("\x1b[H\x1b[2J\n\x1b[m", tty);
+		fputs(!opt_lines ? "\033[H\033[2J" : "\r\033[J", tty);
+		fputs("\n\033[m", tty);
+
 		int rows, cols;
 		rl_get_screen_size(&rows, &cols);
+		if (opt_lines && opt_lines + 2 < rows)
+			rows = opt_lines + 2;
 
 		score_all();
 		sort_all();
@@ -871,11 +884,13 @@ main(int argc, char *argv[])
 					nb_matches, nb_records, nb_total_records);
 		fputs(opt_header, tty);
 
-		print_records(rows - 2);
+		uint32_t n = print_records(rows - 2);
 
-		fputs("\x1b[H\x1b[m", tty);
-
-		fflush(tty);
+		if (!opt_lines)
+			fputs("\033[H", tty);
+		else
+			fprintf(tty, "\033[%"PRIu32"A\r", n + 1);
+		fputs("\033[m", tty);
 
 		/* Otherwise no prompt in $(...). Should be reset also
 		 * after catching signals because readline resets it for some
@@ -884,9 +899,9 @@ main(int argc, char *argv[])
 
 		rl_forced_update_display();
 		/* TODO: Maybe care about terminal resizing. */
-		do
+		do {
 			rl_callback_read_char();
-		while (!strcmp(opt_query, rl_line_buffer));
+		} while (!strcmp(opt_query, rl_line_buffer));
 		snprintf(opt_query, sizeof opt_query, "%s", rl_line_buffer);
 	}
 }
