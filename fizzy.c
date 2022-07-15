@@ -864,9 +864,12 @@ main(int argc, char *argv[])
 			emit_one();
 
 		if (nb_records == nb_total_records)
-			fprintf(tty, "[%"PRIu32"/%"PRIu32"] %s", nb_matches, nb_records, opt_header);
+			fprintf(tty, "[%"PRIu32"/%"PRIu32"] ",
+					nb_matches, nb_records);
 		else
-			fprintf(tty, "[%"PRIu32"/%"PRIu32" (%"PRIu32")] %s", nb_matches, nb_records, nb_total_records, opt_header);
+			fprintf(tty, "[%"PRIu32"/%"PRIu32" (%"PRIu32")] ",
+					nb_matches, nb_records, nb_total_records);
+		fputs(opt_header, tty);
 
 		print_records(rows - 2);
 
