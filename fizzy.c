@@ -9,6 +9,7 @@
 #include <getopt.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -690,6 +691,26 @@ fizzy_rl_filter_reset(int count, int c)
 	return 1;
 }
 
+static void
+handle_interrupt(int sig)
+{
+	(void)sig;
+	/* readline handles (or at least should handle) signals or tell the
+	 * terminal to not send them but it is actually... do not know what the
+	 * fuck is going on or how to do this. exit() is not async thread safe,
+	 * we should protected-poll tty and then do rl_callback_read_char(),
+	 * but clearly, I do not want to waste more time/lines on it. It works
+	 * in 99.9% of cases and it is enough. */
+	exit(EXIT_FAILURE);
+}
+
+static void
+bye(void)
+{
+	fputs("\x1b[?1049l", tty);
+	fflush(tty);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -818,13 +839,16 @@ main(int argc, char *argv[])
 
 	/* Calls rl_initalize(). */
 	rl_callback_handler_install(opt_prompt, fizzy_rl_handle_line);
-	/* Otherwise no prompt in $(...). */
-	rl_tty_set_echoing(1);
 
 	/* Disable wrapping. */
 	fputs("\x1b[?7l", tty);
 	/* Switch to alt screen. */
 	fputs("\x1b[?1049h", tty);
+	atexit(bye);
+
+	signal(SIGINT, handle_interrupt);
+	signal(SIGTERM, handle_interrupt);
+	signal(SIGQUIT, handle_interrupt);
 
 	rl_insert_text(opt_query);
 	rl_resize_terminal();
@@ -849,6 +873,11 @@ main(int argc, char *argv[])
 		fputs("\x1b[H\x1b[m", tty);
 
 		fflush(tty);
+
+		/* Otherwise no prompt in $(...). Should be reset also
+		 * after catching signals because readline resets it for some
+		 * reason (e.g. after C-z). */
+		rl_tty_set_echoing(1);
 
 		rl_forced_update_display();
 		/* TODO: Maybe care about terminal resizing. */
