@@ -101,9 +101,8 @@ Underline instead of invert.
 
 =head1 READLINE
 
-When B<fizzy> runs in interactive mode (default) it uses C<readline(3)> utility
-to read user input. It just works out of the box however if you need any
-customization please refer to its documentation.
+When B<fizzy> runs in interactive mode (default) it uses C<readline(3)> to read
+user input.
 
 Line handler is set to B<fizzy-emit-one>.
 
