@@ -76,6 +76,7 @@ static char const *opt_prompt = "> ";
 static char const *opt_header = "";
 static char const *opt_hi_start = "\033[7m";
 static char const *opt_hi_end = "\033[27m";
+static char const *opt_execute = "";
 static char opt_query[QUERY_SIZE + 1 /* NUL */];
 static char opt_delim = '\n';
 static bool opt_interactive = true;
@@ -720,7 +721,7 @@ reset_term(void)
 int
 main(int argc, char *argv[])
 {
-	for (int opt; -1 != (opt = getopt(argc, argv, "01acfh:il:np:q:su" IF1(WITH_OMP, "j:")));)
+	for (int opt; -1 != (opt = getopt(argc, argv, "01acfh:il:np:q:sux:" IF1(WITH_OMP, "j:")));)
 		switch (opt) {
 		case '0':
 			opt_delim = '\0';
@@ -779,6 +780,10 @@ main(int argc, char *argv[])
 		case 'u':
 			opt_hi_start = "\033[4m";
 			opt_hi_end = "\033[24m";
+			break;
+
+		case 'x':
+			opt_execute = optarg;
 			break;
 
 		case '?':
@@ -900,6 +905,10 @@ main(int argc, char *argv[])
 		rl_forced_update_display();
 		/* TODO: Maybe care about terminal resizing. */
 		do {
+			if (*opt_execute) {
+				rl_stuff_char(*opt_execute);
+				++opt_execute;
+			}
 			rl_callback_read_char();
 		} while (!strcmp(opt_query, rl_line_buffer));
 		snprintf(opt_query, sizeof opt_query, "%s", rl_line_buffer);

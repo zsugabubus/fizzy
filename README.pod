@@ -97,6 +97,10 @@ Disable sorting.
 
 Underline instead of invert.
 
+=item -x
+
+Feed keys in interactive mode.
+
 =back
 
 =head1 READLINE
