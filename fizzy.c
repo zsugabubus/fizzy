@@ -849,7 +849,7 @@ main(int argc, char *argv[])
 	rl_add_defun("fizzy-emit-all", fizzy_rl_emit_all, -1);
 	rl_add_defun("fizzy-emit-one", fizzy_rl_emit_one, -1);
 	rl_add_defun("fizzy-exit", fizzy_rl_exit, -1);
-	rl_add_defun("fizzy-filter-matched", fizzy_rl_filter_matched, ' ');
+	rl_add_defun("fizzy-filter-matched", fizzy_rl_filter_matched, -1);
 	rl_add_defun("fizzy-filter-reset", fizzy_rl_filter_reset, -1);
 
 	/* Disable wrapping. */

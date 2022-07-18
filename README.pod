@@ -14,8 +14,8 @@ B<fizzy> is a minimal command-line tool to filter input records based on
 B<fizzy> exposes no limitations on input record length, but restricts queries
 to 32 bytes (what a nice number). The good news is that latter limit is
 practically unreachable because queries tend to be a lot shorter than this.
-However, if needed, B<fuzzy-filter-matched> function (default bound to
-B<SPACE>) can be used to exclude all non-matching records from further queries.
+However, if needed, B<fuzzy-filter-matched> function can be used to exclude all
+non-matching records from further queries.
 
 B<fizzy> has primitve UTF-8 support and only in the ASCII range capable of
 doing case-insensitive matchings (e.g. "o" matches "O").
