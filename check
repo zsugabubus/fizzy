@@ -184,6 +184,16 @@ T -qabd <<"EOF"
 1	abxxd
 EOF
 
+T -qabcd <<"EOF"
+0	abcDxxxDxxxx
+1	abcXxxxxXddxxx
+EOF
+
+T -qab <<"EOF"
+0	axxxbxxx	Ab
+1	xxxxxxxxxx axx xxx bxxx
+EOF
+
 # T -qabc <<"EOF"
 # 1	A	B	C	D
 # 0	abcd
