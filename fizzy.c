@@ -38,10 +38,10 @@
 
 #define COMPARE(a, b) (((a) > (b)) - ((a) < (b)))
 
-#define BITSET_SIZE(n) (((n) + (CHAR_BIT - 1)) / CHAR_BIT)
-#define BITSET_OP(x, op, bit, i) (((x)[(i) / CHAR_BIT]) op ((bit) << ((i) % CHAR_BIT)))
-#define BITSET_SET_IF(x, i, cond) BITSET_OP(x, |=, !!(cond), i)
-#define BITSET_TEST(x, i) BITSET_OP(x, &, 1, i)
+#define BITS_SIZE(n) (((n) + (CHAR_BIT - 1)) / CHAR_BIT)
+#define BIT_OP(array, op, bit, i) (((array)[(i) / CHAR_BIT]) op ((bit) << ((i) % CHAR_BIT)))
+#define BIT_SET_IF(array, i, cond) BIT_OP(array, |=, !!(cond), i)
+#define BIT_TEST(array, i) BIT_OP(array, &, 1, i)
 
 #if 0
 # define dbgf(...) fprintf(__VA_ARGS__)
@@ -182,17 +182,17 @@ static void
 add_record(char const *pre, size_t presz, char const *buf, size_t bufsz)
 {
 	uint32_t sz = presz + bufsz;
-	uint32_t allocsz = offsetof(struct record, bytes[BITSET_SIZE(sz) + sz]);
+	uint32_t allocsz = offsetof(struct record, bytes[BITS_SIZE(sz) + sz]);
 	struct record *record = malloc(allocsz);
 	if (!record)
 		abort();
 
 	record->index = nb_total_records;
 	record->size = sz;
-	memset(record->bytes, 0, BITSET_SIZE(sz));
-	uint8_t *str = record->bytes + BITSET_SIZE(sz);
+	memset(record->bytes, 0, BITS_SIZE(sz));
+	uint8_t *str = record->bytes + BITS_SIZE(sz);
 	memcpy(str, pre, presz);
-	memcpy(record->bytes + BITSET_SIZE(sz) + presz, buf, bufsz);
+	memcpy(record->bytes + BITS_SIZE(sz) + presz, buf, bufsz);
 
 	bool escape = false;
 	for (uint32_t i = 0; i < sz; ++i) {
@@ -202,7 +202,7 @@ add_record(char const *pre, size_t presz, char const *buf, size_t bufsz)
 
 		bool control = c < ' ' && !CLASSIFY[c];
 		bool ignore = control || escape;
-		BITSET_SET_IF(record->bytes, i, ignore);
+		BIT_SET_IF(record->bytes, i, ignore);
 
 		/* End of SGR sequence. */
 		escape &= 'm' != c;
@@ -229,7 +229,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 		positions[0] = UINT32_MAX;
 
 	uint32_t n = record->size;
-	uint8_t const *str = record->bytes + BITSET_SIZE(record->size);
+	uint8_t const *str = record->bytes + BITS_SIZE(record->size);
 
 	uint32_t m = 0;
 	for (uint8_t const *q = (uint8_t *)opt_query,
@@ -253,7 +253,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 			i = ptr - str;
 			++ptr;
 
-			if (!BITSET_TEST(record->bytes, i))
+			if (!BIT_TEST(record->bytes, i))
 				break;
 		}
 	}
@@ -305,7 +305,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 
 	for (uint32_t i = 0; i < n; ++i) {
 		/* Test ignored input position. */
-		if (BITSET_TEST(record->bytes, i))
+		if (BIT_TEST(record->bytes, i))
 			continue;
 
 		++o;
@@ -565,7 +565,7 @@ print_records(int nb_lines)
 		fprintf(tty, "(%5d,%5d) ", record->score, record->trail);
 #endif
 
-		uint8_t const *str = record->bytes + BITSET_SIZE(record->size);
+		uint8_t const *str = record->bytes + BITS_SIZE(record->size);
 		uint32_t start = 0;
 		for (uint32_t k = 0;; ++k) {
 			uint32_t end = positions[k];
@@ -594,7 +594,7 @@ emit_record(struct record const *record)
 	if (opt_print_indices) {
 		printf("%"PRIu32, record->index);
 	} else {
-		uint8_t const *str = record->bytes + BITSET_SIZE(record->size);
+		uint8_t const *str = record->bytes + BITS_SIZE(record->size);
 		uint32_t size = record->size;
 		/* Cut prefix. */
 		if (opt_prefix_alpha) {
