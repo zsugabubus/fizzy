@@ -71,17 +71,21 @@ T -qabcd <<"EOF"
 EOF
 T -qabcx <<"EOF"
 0	/abxcCdxx/XxXXDxxx
-1	/abxcCdxx/AbxcCdxx
+-	/abxcCdxx/AbxcCdxx
 EOF
 
 T -qabcd <<"EOF"
 0	xxxxxxxxxxxxxxxxxxxxxxxxxx Abxxxx Cxxxxxxxx Dxxxxxxxx
-1	axxxxbxx cxxxx dx xxxxx axxxxbxx cxxxx dx
+-	axxxxbxx cxxxx dx xxxxx axxxxbxx cxxxx dx
 EOF
 
 T -qabcde <<"EOF"
 0	AbcxxxxDexxxxx
-1	AbcxxxxXdexxx
+-	AbcxxxxXdexxx
+EOF
+T -qabcde <<"EOF"
+0	AbcxxxxDexxxxx
+1	AbcxxxxXDexxx
 EOF
 
 T -qabac <<"EOF"
@@ -97,24 +101,19 @@ EOF
 
 T -qabc <<"EOF"
 0	axx/xxxxxxxxxb/ABCxxxx.xxx
-1	axx/xxxxa/xxx/xxx-bxx-xxxxxxxx-xxcxxxx
-2	xxxxx/xxxx.abc
+-	axx/xxxxa/xxx/xxx-bxx-xxxxxxxx-xxcxxxx
+1	xxxxx/xxxx.abc
 EOF
 T -qabc <<"EOF"
 0	axx/xxxxxxxxxb/ABCxxxx.xxx
 1	xxxxx/xxxx.abc
-2	xax/xxxxa/xxx/xxx-bxx-xxxxxxxx-xxcxxxx
+-	xax/xxxxa/xxx/xxx-bxx-xxxxxxxx-xxcxxxx
 EOF
 #  ^-- Not at high bonus position.
 
 T -qaba <<"EOF"
 0	xxxxxxxxxxxx/AxxxBxxxxxAxxxx
-1	axxxb/xxx/axxx
-EOF
-
-T -qaba <<"EOF"
-0	xxxxxxxxxxxx/AxxxBxxxxxAxxxx
-1	axxxb/xxx/axxx
+-	axxxb/xxx/axxx
 EOF
 
 ! T -qm <<EOF
@@ -125,8 +124,9 @@ EOF
 EOF
 
 T -qab <<EOF
-0	xa$esc[xxxxxxxxxxmbx
-1	xaxxxxxxxxxxbx
+0	a$esc[xxxxxxxxxxmbx
+1	axxxxxxxxx.bx
+-	axxxxxxxxxxbx
 EOF
 
 T -qa <<"EOF"
@@ -150,43 +150,42 @@ T -qabc <<"EOF"
 EOF
 T -qabcd <<"EOF"
 0	/abcDx
-1	/axxxx/bcxxdXx
+-	/axxxx/bcxxdXx
 EOF
 
 # Prefer shorter.
 T -qa <<"EOF"
-0	xaxb
-2	xaxxxb
-1	xaxxb
-3	xaxxxxb
+0	/axb
+2	/axxxb
+1	/axxb
+3	/axxxxb
 EOF
 T -qab <<"EOF"
-0	xaxb
-2	xaxxxb
-1	xaxxb
-3	xaxxxxb
+0	/a/b
+2	/axx/b
+1	/ax/b
+3	/axxx/b
 EOF
-# Prefer less gap.
+# Prefer shorter gap.
 T -qab <<"EOF"
-0	.axbxxx
-2	.axxxbx
-1	.axxbxx
-3	.axxxxb
+0	/a/bxxx
+2	/axx/bx
+1	/ax/bxx
+3	/axxx/b
 EOF
 
 T -qab <<"EOF"
-0	abxxd
-1	abxxbd
+0	AbxxD
+1	AbxxbD
 EOF
-# XXX: Maybe unwanted: abd(max)+bd(cont)
 T -qabd <<"EOF"
-0	abxxbd
-1	abxxd
+0	AbxxD
+1	AbxxbD
 EOF
 
 T -qabcd <<"EOF"
 0	abcDxxxDxxxx
-1	abcXxxxxXddxxx
+-	abcXxxxxXddxxx
 EOF
 
 T -qab <<"EOF"
@@ -194,20 +193,29 @@ T -qab <<"EOF"
 1	xxxxxxxxxx axx xxx bxxx
 EOF
 
-# T -qabc <<"EOF"
-# 1	A	B	C	D
-# 0	abcd
-# EOF
-# T -qabcd <<"EOF"
-# 1	abcd
-# 0	A	B	C	D
-# EOF
+T -qabc <<"EOF"
+0	/AxxBcxxx
+1	/AxxBcxxxCxxx
+EOF
 
-# T -qabc <<"EOF"
-# 1	A	B	C	D
-# 0	xxx	abcd	xxx
-# EOF
-# T -qabcd <<"EOF"
-# 1	xxx	abcd	xxx
-# 0	A	B	C	D
-# EOF
+printf '%d\t%*s\n' 0 100 '' 1 1000 '' 2 10000 '' |
+tr ' ' 'A' |
+T -qaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+printf '%d\tX%*s\n' 0 100 '' 1 1000 '' 2 10000 '' |
+tr ' ' 'A' |
+T -qaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+! T -qab <<"EOF"
+-	xb
+EOF
+
+T -qa <<"EOF"
+0	abcd
+1	a	b	c	d
+EOF
+for x in ab abc abcd; do
+	T -q$x <<"EOF"
+0	a	b	c	d
+1	abcd
+EOF
+done

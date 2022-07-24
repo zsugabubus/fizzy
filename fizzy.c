@@ -46,7 +46,7 @@
 #if 0
 # define dbgf(...) fprintf(__VA_ARGS__)
 #else
-# define dbgf(...)
+# define dbgf(...) ((void)0)
 #endif
 
 enum {
@@ -69,6 +69,7 @@ enum char_class {
 	CC_SPECIAL,
 	CC_LOWER,
 	CC_UPPER,
+	CC_DIGIT,
 	CC_NB,
 };
 
@@ -112,10 +113,21 @@ static uint8_t const CLASSIFY[] = {
 	'[' == c ? CC_SPECIAL : \
 	'a' <= c && c <= 'z' ? CC_LOWER : \
 	'A' <= c && c <= 'Z' ? CC_UPPER : \
+	'0' <= c && c <= '9' ? CC_DIGIT : \
 	CC_NONE,
 	REPEAT256(0)
 #undef xmacro
 };
+
+#define CC_MKBIT2(prev_cc, cur_cc) \
+	(1UL << ((prev_cc) * CC_NB + (cur_cc)))
+
+static uint64_t const IGNORE_NONMATCHING = 0
+	| CC_MKBIT2(CC_LOWER, CC_LOWER)
+	| CC_MKBIT2(CC_UPPER, CC_LOWER)
+	| CC_MKBIT2(CC_DIGIT, CC_DIGIT)
+	| CC_MKBIT2(CC_UPPER, CC_LOWER)
+;
 
 #define CC_ALL(x) \
 	[CC_NONE] = (x), \
@@ -124,7 +136,8 @@ static uint8_t const CLASSIFY[] = {
 	[CC_SUBWORD_BREAK] = (x), \
 	[CC_SPECIAL] = (x), \
 	[CC_LOWER] = (x), \
-	[CC_UPPER] = (x) \
+	[CC_UPPER] = (x), \
+	[CC_DIGIT] = (x) \
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Woverride-init"
@@ -252,7 +265,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 
 	/*
 	 *  subject string
-	 * Q j i -> n
+	 * Q j i o -> n
 	 * U ^
 	 * E |
 	 * R k
@@ -284,17 +297,14 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 	enum char_class prev_cc = CC_FIELD_BREAK;
 	uint32_t prev_mat = 0;
 	uint32_t max_score = 0;
-	uint32_t max_pos = 0;
-	/* Starts at 0 so first query byte must be matched before others. After
-	 * then it is incremented step-by-step so a next byte can only be
-	 * matched when everything before it has already been matched once. */
-	uint32_t k = 0;
-	/* Output byte index. */
-	uint32_t o = 0;
+	uint32_t latest_pos = 0;
+	uint32_t k = 0; /* Query prefix length. */
+	uint32_t o = 0; /* Output byte index. */
 
 	dbgf(stderr, "%.*s\n", n, str);
 
 	for (uint32_t i = 0; i < n; ++i) {
+		/* Test ignored input position. */
 		if (BITSET_TEST(record->bytes, i))
 			continue;
 
@@ -303,7 +313,16 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 		uint8_t c = str[i];
 		enum char_class cc = CLASSIFY[c];
 
-		uint32_t mat = qmat[c] & ((2 << k) - 1);
+		uint32_t mat = qmat[c];
+		/* Disallow matches outside the k-length prefix. */
+		mat &= ((2 << k) - 1);
+		/* Test if position is dynamically ignored. */
+		if (CC_MKBIT2(prev_cc, cc) & IGNORE_NONMATCHING) {
+			int b = !!mat;
+			mat &= (prev_mat << 1) | prev_mat;
+			if (b && !mat)
+				dbgf(stderr, "%*.s%c-\n", i, "", c);
+		}
 		if (!mat) {
 			prev_mat = 0;
 			prev_cc = cc;
@@ -316,7 +335,11 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 		uint32_t bonus = BONUS[prev_cc][cc];
 		prev_cc = cc;
 
-		k += (mat & (1 << k)) && k + 1 < m;
+		/* Allow matching next byte from query when complete prefix has
+		 * been matched. This ensures that a later byte in the query
+		 * cannot be matched without requiring all preceding bytes to
+		 * be matched (at least once). */
+		k += (mat >> k) && k + 1 < m;
 
 		/* Go backwards so we can see the previous state of an upper
 		 * cell. */
@@ -347,6 +370,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 			/* Increase bonus so longer wins. */
 			cont_bonus += 1;
 			cont_bonuses[j + 1] = cont_bonus;
+			/* New test that cont_bonus is really applicable. */
 			if (!((cont_mat << 1) & (1 << j)))
 				cont_bonus = 0;
 			score += cont_bonus;
@@ -362,6 +386,35 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 					score,
 					o + score <= max_scores[j + 1] ? "" : "MAX");
 
+			if (j + 1 == m) {
+				latest_pos = i;
+				if (nb_positions) {
+					/* Reserve space for highest quality match. */
+					uint32_t tmp = nb_positions - (
+							j + /* Previous values. */
+							1 + /* This one. */
+							1 /* End marker. */
+					);
+					if (tmp < out_position)
+						out_position = tmp;
+
+					/* Append new positions. Old ones are already included
+					 * in positions list because i is strict monotonic
+					 * increasing. */
+					uint32_t skip = 0;
+					while (0 < out_position &&
+					       skip < j &&
+					       max_paths[j - 1][skip] <= positions[out_position - 1])
+						++skip;
+
+					memcpy(positions + out_position, max_paths[j - 1] + skip,
+							(j - skip) * sizeof **max_paths);
+					out_position += j - skip;
+					positions[out_position] = i;
+					out_position += 1;
+				}
+			}
+
 			if (o + score <= max_scores[j + 1])
 				continue;
 			max_scores[j + 1] = o + score;
@@ -376,38 +429,11 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 				max_paths[j][j] = i;
 				continue;
 			}
-			/* Matched the whole query. */
 
-			max_score = score;
-			max_pos = i;
-			dbgf(stderr, "new_max=%u\n", max_score);
-
-			if (!nb_positions)
-				continue;
-
-			/* Reserve space for highest quality match. */
-			uint32_t tmp = nb_positions - (
-					j + /* Previous values. */
-					/*1 +*/ /* This one. */
-					1 /* End marker. */
-			);
-			if (tmp < out_position)
-				out_position = tmp;
-
-			/* Append new positions. Old ones are already included
-			 * in positions list because i is strict monotonic
-			 * increasing. */
-			uint32_t skip = 0;
-			while (0 < out_position &&
-			       skip < j &&
-			       max_paths[j - 1][skip] <= positions[out_position - 1])
-				++skip;
-
-			memcpy(positions + out_position, max_paths[j - 1] + skip,
-					(j - skip) * sizeof **max_paths);
-			out_position += j - skip;
-			positions[out_position] = i;
-			out_position += 1;
+			if (max_score < score) {
+				max_score = score;
+				dbgf(stderr, "new_max=%u\n", max_score);
+			}
 		}
 	}
 
@@ -417,7 +443,7 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 		positions[out_position] = UINT32_MAX;
 
 	record->score = max_score;
-	record->trail = n - max_pos;
+	record->trail = n - latest_pos;
 }
 
 static void
@@ -535,7 +561,9 @@ print_records(int nb_lines)
 		uint32_t positions[4 * QUERY_SIZE + 1];
 		score_record(record, positions, sizeof positions / sizeof *positions);
 
-		dbgf(tty, "(%5d) ", record->score);
+#if 0
+		fprintf(tty, "(%5d,%5d) ", record->score, record->trail);
+#endif
 
 		uint8_t const *str = record->bytes + BITSET_SIZE(record->size);
 		uint32_t start = 0;
@@ -563,9 +591,9 @@ print_records(int nb_lines)
 static void
 emit_record(struct record const *record)
 {
-	if (opt_print_indices)
+	if (opt_print_indices) {
 		printf("%"PRIu32, record->index);
-	else {
+	} else {
 		uint8_t const *str = record->bytes + BITSET_SIZE(record->size);
 		uint32_t size = record->size;
 		/* Cut prefix. */
