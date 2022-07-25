@@ -102,6 +102,8 @@ static uint8_t const CLASSIFY[] = {
 	'\t' == c || \
 	('_' - '@') == c ? CC_FIELD_BREAK : \
 	' ' == c || \
+	'"' == c || \
+	'\'' == c || \
 	'/' == c ? CC_WORD_BREAK : \
 	'_' == c || \
 	'-' == c ? CC_SUBWORD_BREAK : \
