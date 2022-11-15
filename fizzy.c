@@ -92,6 +92,7 @@ static int opt_lines = 0;
 static FILE *tty;
 
 static uint32_t nb_total_records, nb_records, nb_matches;
+static bool records_changed;
 static struct record **records;
 /* [c]= (1 << i0) | ... <=> q[i0] matches (==) c */
 static uint32_t qmat[UINT8_MAX + 1];
@@ -248,6 +249,8 @@ add_record(char const *pre, size_t presz, char const *buf, size_t bufsz)
 			abort();
 	}
 	records[nb_total_records++] = record;
+
+	records_changed = true;
 }
 
 static void
@@ -480,7 +483,7 @@ static void
 score_all(void)
 {
 	bool subquery = strstr(opt_query, cur_query);
-	uint32_t n = subquery ? nb_matches : nb_records;
+	uint32_t n = !records_changed && subquery ? nb_matches : nb_records;
 	memcpy(cur_query, opt_query, sizeof cur_query);
 
 	memset(qmat, 0, sizeof qmat);
@@ -507,6 +510,8 @@ score_all(void)
 		records[i] = t;
 		++nb_matches;
 	}
+
+	records_changed = false;
 }
 
 static int
@@ -740,6 +745,7 @@ edit_records(uint32_t n)
 	read_records(input);
 	nb_matches = nb_total_records;
 	nb_records = nb_total_records;
+	records_changed = true;
 
 	fclose(input);
 }
@@ -781,6 +787,8 @@ fizzy_rl_edit(int count, int c)
 {
 	(void)count, (void)c;
 	edit_records(nb_records);
+	/* Force redraw. */
+	records_changed = true;
 	return 1;
 }
 
@@ -812,6 +820,7 @@ fizzy_rl_filter_matched(int count, int c)
 {
 	(void)count, (void)c;
 	nb_records = nb_matches;
+	records_changed = true;
 	rl_replace_line("", true);
 	return 1;
 }
@@ -821,6 +830,7 @@ fizzy_rl_filter_reset(int count, int c)
 {
 	(void)count, (void)c;
 	nb_records = nb_total_records;
+	records_changed = true;
 	rl_replace_line("", true);
 	return 1;
 }
@@ -1028,7 +1038,7 @@ main(int argc, char *argv[])
 				++opt_execute;
 			}
 			rl_callback_read_char();
-		} while (!strcmp(opt_query, rl_line_buffer));
+		} while (!records_changed && !strcmp(opt_query, rl_line_buffer));
 		snprintf(opt_query, sizeof opt_query, "%s", rl_line_buffer);
 	}
 }
