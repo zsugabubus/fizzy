@@ -317,14 +317,12 @@ score_record(struct record *record, uint32_t *positions, uint32_t nb_positions)
 
 		uint32_t mat = qmat[c];
 		/* Disallow matches outside the k-length prefix. */
-		mat &= ((2 << k) - 1);
+		mat &= (2 << k) - 1;
 		/* Test if position is dynamically ignored. */
-		if (CC_MKBIT2(prev_cc, cc) & IGNORE_NONMATCHING) {
-			int b = !!mat;
-			mat &= (prev_mat << 1) | prev_mat;
-			if (b && !mat)
-				dbgf(stderr, "%*.s%c-\n", i, "", c);
-		}
+		uint32_t t = (prev_mat << 1) | prev_mat;
+		if (!(CC_MKBIT2(prev_cc, cc) & IGNORE_NONMATCHING))
+			t = ~0;
+		mat &= t;
 		if (!mat) {
 			prev_mat = 0;
 			prev_cc = cc;
