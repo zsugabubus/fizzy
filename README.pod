@@ -135,6 +135,10 @@ exit with failure.
 
 Execute B<fizzy-accept-one> if only a single record is available.
 
+=item B<fizzy-edit>
+
+Edit records in B<$EDITOR>.
+
 =item B<fizzy-emit-all>
 
 Similar to B<fizzy-emit-one> but for all records.
@@ -166,7 +170,11 @@ Open a file
 Set custom bindings in .inputrc
 
 	$if Fizzy # `ARGV0=MyFizzy fizzy` to change name.
-	+: fizzy-emit-one
+	"\e\C-M": fizzy-accept-all
+	"+": fizzy-emit-one
+	"[": fizzy-filter-reset
+	"]": fizzy-filter-matched
+	"\C-v": fizzy-edit
 	$endif
 
 =head1 ENVIRONMENT

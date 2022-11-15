@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #if WITH_OMP
@@ -179,6 +180,35 @@ static uint8_t const BONUS[CC_NB][CC_NB] = {
 	},
 };
 #pragma GCC diagnostic pop
+
+static void
+setup_term(void)
+{
+	/* Disable wrapping. */
+	fputs("\033[?7l", tty);
+	if (!opt_lines)
+		/* Switch to alt screen. */
+		fputs("\033[?1049h", tty);
+	fflush(tty);
+}
+
+static void
+reset_term(void)
+{
+	fputs("\033[?7h", tty);
+	fputs("\033[?1049l", tty);
+	fflush(tty);
+}
+
+static void
+clear_records(void)
+{
+	for (uint32_t i = 0; i < nb_total_records; ++i)
+		free(records[i]);
+	free(records);
+	records = NULL;
+	nb_total_records = 0;
+}
 
 static void
 add_record(char const *pre, size_t presz, char const *buf, size_t bufsz)
@@ -589,21 +619,27 @@ print_records(int nb_lines)
 }
 
 static void
+print_record(struct record const *record, FILE *stream)
+{
+	uint8_t const *str = record->bytes + BITS_SIZE(record->size);
+	uint32_t size = record->size;
+	/* Cut prefix. */
+	if (opt_prefix_alpha) {
+		uint8_t const *p = memchr(str, '\t', size);
+		p += 1;
+		size -= p - str;
+		str = p;
+	}
+	fwrite(str, 1, size, stream);
+}
+
+static void
 emit_record(struct record const *record)
 {
 	if (opt_print_indices) {
 		printf("%"PRIu32, record->index);
 	} else {
-		uint8_t const *str = record->bytes + BITS_SIZE(record->size);
-		uint32_t size = record->size;
-		/* Cut prefix. */
-		if (opt_prefix_alpha) {
-			uint8_t const *p = memchr(str, '\t', size);
-			p += 1;
-			size -= p - str;
-			str = p;
-		}
-		fwrite(str, 1, size, stdout);
+		print_record(record, stdout);
 	}
 	fputc(opt_delim, stdout);
 }
@@ -653,6 +689,62 @@ accept_all(void)
 }
 
 static void
+edit_records(uint32_t n)
+{
+	char pathname[] = "/tmp/fizzyXXXXXX";
+	int fd = mkstemp(pathname);
+	if (fd < 0)
+		return;
+	FILE *f = fdopen(fd, "w");
+	if (!f)
+		abort();
+
+	for (uint32_t i = 0; i < n; ++i) {
+		struct record *record = records[i];
+		print_record(record, f);
+		fputc(opt_delim, f);
+	}
+
+	if (fclose(f))
+		return;
+
+	reset_term();
+
+	pid_t pid = fork();
+	if (!pid) {
+		if (0 <= dup2(fileno(tty), STDIN_FILENO) &&
+		    0 <= dup2(fileno(tty), STDOUT_FILENO) &&
+		    0 <= dup2(fileno(tty), STDERR_FILENO))
+			execlp("sh", "sh", "-c", "$EDITOR -- \"$1\"", "fizzy-editor", pathname, NULL);
+		_exit(127);
+	}
+
+	int status;
+	if (waitpid(pid, &status, 0) <= 0 ||
+	    !WIFEXITED(status) ||
+	    EXIT_SUCCESS != WEXITSTATUS(status))
+	{
+		setup_term();
+		unlink(pathname);
+		return;
+	}
+
+	setup_term();
+
+	FILE *input = fopen(pathname, "r");
+	unlink(pathname);
+	if (!input)
+		return;
+
+	clear_records();
+	read_records(input);
+	nb_matches = nb_total_records;
+	nb_records = nb_total_records;
+
+	fclose(input);
+}
+
+static void
 fizzy_rl_handle_line(char *line)
 {
 	if (!line)
@@ -681,6 +773,14 @@ fizzy_rl_accept_only(int count, int c)
 {
 	(void)count, (void)c;
 	accept_only();
+	return 1;
+}
+
+static int
+fizzy_rl_edit(int count, int c)
+{
+	(void)count, (void)c;
+	edit_records(nb_records);
 	return 1;
 }
 
@@ -736,14 +836,6 @@ handle_interrupt(int sig)
 	 * but clearly, I do not want to waste more time/lines on it. It works
 	 * in 99.9% of cases and it is enough. */
 	exit(EXIT_FAILURE);
-}
-
-static void
-reset_term(void)
-{
-	fputs("\033[?7h", tty);
-	fputs("\033[?1049l", tty);
-	fflush(tty);
 }
 
 int
@@ -833,6 +925,7 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
+	clear_records();
 	read_records(input);
 	nb_matches = nb_total_records;
 	nb_records = nb_total_records;
@@ -874,17 +967,14 @@ main(int argc, char *argv[])
 	rl_add_defun("fizzy-accept-all", fizzy_rl_accept_all, -1);
 	rl_add_defun("fizzy-accept-one", fizzy_rl_accept_one, -1);
 	rl_add_defun("fizzy-accept-only", fizzy_rl_accept_only, -1);
+	rl_add_defun("fizzy-edit", fizzy_rl_edit, -1);
 	rl_add_defun("fizzy-emit-all", fizzy_rl_emit_all, -1);
 	rl_add_defun("fizzy-emit-one", fizzy_rl_emit_one, -1);
 	rl_add_defun("fizzy-exit", fizzy_rl_exit, -1);
 	rl_add_defun("fizzy-filter-matched", fizzy_rl_filter_matched, -1);
 	rl_add_defun("fizzy-filter-reset", fizzy_rl_filter_reset, -1);
 
-	/* Disable wrapping. */
-	fputs("\033[?7l", tty);
-	if (!opt_lines)
-		/* Switch to alt screen. */
-		fputs("\033[?1049h", tty);
+	setup_term();
 	atexit(reset_term);
 
 	signal(SIGINT, handle_interrupt);
