@@ -549,9 +549,9 @@ sort_all(void)
 static char const *
 gen_word(uint32_t i, char a, char z)
 {
-	static char buf[100];
+	static char buf[32];
 
-	char *p = (&buf)[1];
+	char *p = buf + 31;
 	do {
 		*--p = a + i % (z - a + 1);
 		i /= (z - a + 1);
@@ -568,7 +568,7 @@ read_records(FILE *stream)
 	for (ssize_t linelen;
 	     0 < (linelen = getdelim(&line, &linesz, opt_delim, stream));)
 	{
-		char pre[100];
+		char pre[32];
 		int presz = 0;
 		if (opt_prefix_alpha) {
 			char const *word = gen_word(nb_total_records, 'A', 'Z');
